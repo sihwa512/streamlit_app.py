@@ -5,9 +5,10 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 import re
+import time
 
 # --- 1. 基本設定 ---
-st.set_page_config(page_title="退休戰情室 V74.2", layout="wide")
+st.set_page_config(page_title="退休戰情室 V74.3", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 
 def get_client():
@@ -24,103 +25,81 @@ def get_client():
             "client_x509_cert_url": s["client_x509_cert_url"]
         }
         return gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
-    except Exception as e:
-        st.error(f"連線失敗: {e}")
-        return None
+    except: return None
 
-# --- 2. 數據處理核心 ---
-def load_all_data():
+# --- 2. 緩存數據讀取 (防止 Quota 429) ---
+@st.cache_data(ttl=60) # 每分鐘最多只跟 Google 要一次資料
+def load_cloud_raw_data():
     client = get_client()
-    if not client: return pd.DataFrame(), {}, 0.0
-    try:
-        doc = client.open_by_key(GS_ID)
-        # 🌟 自動建立缺失的分頁
-        try:
-            ws_t = doc.worksheet("Transactions")
-        except:
-            ws_t = doc.add_worksheet(title="Transactions", rows="100", cols="10")
-            ws_t.append_row(["date", "type", "id", "sh", "pr", "note"])
-            
-        t_data = ws_t.get_all_records()
-        df_t = pd.DataFrame(t_data)
-        
-        stocks = {}
-        total_injected = 0.0
-        
-        if not df_t.empty:
-            df_t['sh'] = pd.to_numeric(df_t['sh'], errors='coerce').fillna(0)
-            df_t['pr'] = pd.to_numeric(df_t['pr'], errors='coerce').fillna(0)
-            
-            for _, row in df_t.iterrows():
-                t_type = str(row['type']).strip()
-                sid = str(row['id']).upper().strip()
-                
-                if t_type == "入金": total_injected += row['sh']
-                elif t_type == "出金": total_injected -= row['sh']
-                elif t_type in ["買入", "賣出"]:
-                    if sid not in stocks: stocks[sid] = {"sh": 0.0, "cost": 0.0}
-                    if t_type == "買入":
-                        stocks[sid]["sh"] += row['sh']
-                        stocks[sid]["cost"] += (row['sh'] * row['pr'])
-                    elif t_type == "賣出":
-                        if stocks[sid]["sh"] > 0:
-                            ratio = row['sh'] / stocks[sid]["sh"]
-                            stocks[sid]["cost"] -= (stocks[sid]["cost"] * ratio)
-                        stocks[sid]["sh"] -= row['sh']
-
-        for sid in stocks:
-            if stocks[sid]["sh"] > 0:
-                stocks[sid]["avg"] = stocks[sid]["cost"] / stocks[sid]["sh"]
-            else: stocks[sid]["avg"] = 0.0
-                
-        return df_t, stocks, total_injected
-    except Exception as e:
-        st.warning(f"系統初始化中... 請嘗試新增第一筆交易。({e})")
-        return pd.DataFrame(), {}, 0.0
-
-def add_entry(t_type, sid, sh, pr, note):
-    client = get_client()
-    if not client: return
+    if not client: return []
     try:
         doc = client.open_by_key(GS_ID)
         ws_t = doc.worksheet("Transactions")
-        now = datetime.now().strftime("%Y-%m-%d %H:%M")
-        ws_t.append_row([now, t_type, sid.upper(), sh, pr, note])
-        st.success("✅ 紀錄已成功寫入雲端！")
-        st.cache_data.clear()
-        st.rerun()
-    except Exception as e: st.error(f"新增失敗: {e}")
+        return ws_t.get_all_records()
+    except Exception as e:
+        if "429" in str(e): st.error("🚨 Google 流量超限，請靜候 1 分鐘再重整。")
+        return []
 
-# --- 3. 獲取報價 ---
+def process_inventory(t_records):
+    stocks = {}
+    total_injected = 0.0
+    if not t_records: return pd.DataFrame(), {}, 0.0
+    
+    df_t = pd.DataFrame(t_records)
+    df_t['sh'] = pd.to_numeric(df_t['sh'], errors='coerce').fillna(0)
+    df_t['pr'] = pd.to_numeric(df_t['pr'], errors='coerce').fillna(0)
+    
+    for _, row in df_t.iterrows():
+        t_type = str(row['type']).strip()
+        sid = str(row['id']).upper().strip()
+        
+        if t_type == "入金": total_injected += row['sh']
+        elif t_type == "出金": total_injected -= row['sh']
+        elif t_type in ["買入", "賣出"]:
+            if sid not in stocks: stocks[sid] = {"sh": 0.0, "cost": 0.0}
+            if t_type == "買入":
+                stocks[sid]["sh"] += row['sh']
+                stocks[sid]["cost"] += (row['sh'] * row['pr'])
+            elif t_type == "賣出":
+                if stocks[sid]["sh"] > 0:
+                    ratio = row['sh'] / stocks[sid]["sh"]
+                    stocks[sid]["cost"] -= (stocks[sid]["cost"] * ratio)
+                stocks[sid]["sh"] -= row['sh']
+
+    for sid in stocks:
+        if stocks[sid]["sh"] > 0:
+            stocks[sid]["avg"] = stocks[sid]["cost"] / stocks[sid]["sh"]
+        else: stocks[sid]["avg"] = 0.0
+    return df_t, stocks, total_injected
+
+# --- 3. 獲取數據 ---
+raw_data = load_cloud_raw_data()
+df_hist, cur_stocks, total_capital = process_inventory(raw_data)
+
 @st.cache_data(ttl=600)
-def get_price(sid):
-    if sid == "CASH": return 1.0
+def get_stock_info(sid):
+    if sid == "CASH": return 1.0, "現金"
     names = {"00662":"富邦NASDAQ", "00670L":"NASDAQ正2", "00865B":"美債1-3Y", "00631L":"50正2", "0050":"元大50", "2330":"台積電"}
     for suf in [".TW", ".TWO", ""]:
         try:
-            t_obj = yf.Ticker(f"{sid}{suf}")
-            p = t_obj.fast_info.last_price
+            p = yf.Ticker(f"{sid}{suf}").fast_info.last_price
             if p > 0: return float(p), names.get(sid, sid)
         except: continue
     return 0.0, sid
 
-# --- 4. 計算與邏輯 ---
-df_hist, cur_stocks, total_capital = load_all_data()
+# --- 4. 主介面 ---
+st.title("📊 退休戰情室 V74.3")
 
 total_mkt = 0.0
 display_rows = []
 for sid, v in cur_stocks.items():
     if v['sh'] <= 0: continue
-    p, name = get_price(sid)
+    p, name = get_stock_info(sid)
     m = v['sh'] * p
     total_mkt += m
     pnl = (p - v['avg']) * v['sh']
     display_rows.append({"代號": sid, "名稱": name, "現價": p, "持有股數": v['sh'], "平均成本": v['avg'], "市值": m, "損益": pnl})
 
-# --- 5. 畫面 ---
-st.title("📊 退休戰情室 V74.2")
-
-# 上方指標
 m1, m2, m3 = st.columns(3)
 with m1: st.metric("資產總市值", f"${total_mkt:,.0f}")
 with m2: st.metric("累計投入本金", f"${total_capital:,.0f}")
@@ -131,34 +110,31 @@ with m3:
 
 st.divider()
 
-# 側邊欄
 with st.sidebar:
-    st.header("🖊️ 交易紀錄錄入")
+    st.header("🖊️ 交易錄入")
     op = st.selectbox("類型", ["買入", "賣出", "入金", "出金"])
-    
     if op in ["買入", "賣出"]:
         sid_in = st.text_input("代號 (如 00662)").upper()
         sh_in = st.number_input("股數", min_value=0.0, step=100.0)
         pr_in = st.number_input("單價", min_value=0.0)
     else:
         sid_in = "CASH"
-        sh_in = st.number_input("金額 (NTD)", min_value=0.0, step=10000.0)
+        sh_in = st.number_input("金額", min_value=0.0, step=10000.0)
         pr_in = 1.0
-    
-    note_in = st.text_input("備註")
-    if st.button("💾 送出並存檔"):
-        add_entry(op, sid_in, sh_in, pr_in, note_in)
+    if st.button("💾 確定寫入雲端"):
+        client = get_client()
+        doc = client.open_by_key(GS_ID)
+        ws_t = doc.worksheet("Transactions")
+        ws_t.append_row([datetime.now().strftime("%Y-%m-%d %H:%M"), op, sid_in, sh_in, pr_in, "系統紀錄"])
+        st.success("✅ 寫入成功！")
+        time.sleep(1) # 強制延遲 1 秒防連發
+        st.cache_data.clear()
+        st.rerun()
 
-# 表格與歷史
-t1, t2 = st.tabs(["📈 持股匯總", "📜 交易日誌"])
+t1, t2 = st.tabs(["📈 持股匯總", "📜 歷史明細"])
 with t1:
     if display_rows:
-        df_disp = pd.DataFrame(display_rows)
-        st.dataframe(df_disp.style.format({
-            "現價": "{:,.2f}", "持有股數": "{:,.0f}", "平均成本": "{:,.2f}", "市值": "${:,.0f}", "損益": "${:,.0f}"
-        }), use_container_width=True, hide_index=True)
-    else: st.info("目前尚無資料，請先從側邊欄點擊「入金」開始。")
-
+        st.dataframe(pd.DataFrame(display_rows), use_container_width=True, hide_index=True)
+    else: st.info("靜候 1 分鐘讓系統冷卻，或新增入金資料。")
 with t2:
-    if not df_hist.empty:
-        st.dataframe(df_hist.iloc[::-1], use_container_width=True, hide_index=True)
+    if not df_hist.empty: st.dataframe(df_hist.iloc[::-1], use_container_width=True, hide_index=True)
