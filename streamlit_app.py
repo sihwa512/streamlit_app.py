@@ -1,171 +1,161 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
-import re
+from datetime import datetime
 
-# --- 1. 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V73.6", layout="wide")
-
-# --- 2. 雲端連線設定 (ID 已固定) ---
-GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs" 
+# --- 1. 頁面與連線設定 ---
+st.set_page_config(page_title="退休戰情室 V74.0 - 交易紀錄版", layout="wide")
+GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 
 def get_client():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         s = st.secrets["gcp_service_account"]
-        
-        # 🌟 關鍵修正邏輯：自動將 \n 轉為真正的換行符號
-        pk = s["private_key"]
-        # 處理 JSON 格式複製過來的反斜線
-        if "\\n" in pk:
-            pk = pk.replace("\\n", "\n")
-        
-        # 移除可能存在的特殊引號或空格
-        pk = pk.strip()
-        
+        pk = s["private_key"].replace("\\n", "\n")
         creds_dict = {
-            "type": s["type"],
-            "project_id": s["project_id"],
-            "private_key_id": s["private_key_id"],
-            "private_key": pk,
-            "client_email": s["client_email"],
-            "client_id": s["client_id"],
-            "auth_uri": s["auth_uri"],
-            "token_uri": s["token_uri"],
+            "type": s["type"], "project_id": s["project_id"], "private_key_id": s["private_key_id"],
+            "private_key": pk, "client_email": s["client_email"], "client_id": s["client_id"],
+            "auth_uri": s["auth_uri"], "token_uri": s["token_uri"],
             "auth_provider_x509_cert_url": s["auth_provider_x509_cert_url"],
             "client_x509_cert_url": s["client_x509_cert_url"]
         }
         return gspread.authorize(Credentials.from_service_account_info(creds_dict, scopes=scope))
     except Exception as e:
-        st.sidebar.error("❌ 金鑰授權失敗，請重新確認 Secrets")
-        st.sidebar.code(str(e))
+        st.error(f"連線失敗: {e}")
         return None
 
-def load_data():
+# --- 2. 核心邏輯：從明細計算庫存 ---
+def load_all_data():
     client = get_client()
-    # 預設數據，保證 Google 連線失敗時畫面不全黑
-    def_s = {"CASH": {"sh": 200000.0, "co": 1.0}}
-    def_p = 50000.0
-    if not client: return def_s, def_p
+    if not client: return pd.DataFrame(), {}, 0.0
     try:
         doc = client.open_by_key(GS_ID)
-        # 讀取 Stocks 分頁
-        ws_s = doc.worksheet("Stocks")
-        all_v = ws_s.get_all_values()
+        
+        # A. 讀取所有交易明細
+        ws_t = doc.worksheet("Transactions")
+        t_data = ws_t.get_all_records()
+        df_t = pd.DataFrame(t_data)
+        
         stocks = {}
-        if len(all_v) > 1:
-            for r in all_v[1:]:
-                if r[0]: stocks[str(r[0]).upper().strip()] = {"sh": float(r[1] or 0), "co": float(r[2] or 0)}
-        else: stocks = def_s
-        # 讀取本金設定
-        try:
-            ws_v = doc.worksheet("Settings")
-            v_v = ws_v.get_all_values()
-            p = float(v_v[1][1]) if len(v_v) > 1 else def_p
-        except: p = def_p
-        return stocks, p
-    except: return def_s, def_p
+        total_injected_cash = 0.0
+        
+        if not df_t.empty:
+            # 確保數字型態正確
+            df_t['sh'] = pd.to_numeric(df_t['sh'], errors='coerce').fillna(0)
+            df_t['pr'] = pd.to_numeric(df_t['pr'], errors='coerce').fillna(0)
+            
+            for _, row in df_t.iterrows():
+                t_type = str(row['type']).strip()
+                sid = str(row['id']).upper().strip()
+                
+                # 1. 計算投入本金 (入金/出金)
+                if t_type == "入金": total_injected_cash += row['sh']
+                elif t_type == "出金": total_injected_cash -= row['sh']
+                
+                # 2. 計算股票庫存與成本 (買入/賣出)
+                elif t_type in ["買入", "賣出"]:
+                    if sid not in stocks: stocks[sid] = {"sh": 0.0, "total_cost": 0.0}
+                    
+                    if t_type == "買入":
+                        stocks[sid]["sh"] += row['sh']
+                        stocks[sid]["total_cost"] += (row['sh'] * row['pr'])
+                    elif t_type == "賣出":
+                        stocks[sid]["sh"] -= row['sh']
+                        # 賣出時按比例減少成本庫存
+                        if (stocks[sid]["sh"] + row['sh']) > 0:
+                            cost_ratio = row['sh'] / (stocks[sid]["sh"] + row['sh'])
+                            stocks[sid]["total_cost"] -= (stocks[sid]["total_cost"] * cost_ratio)
 
-def save_data(stocks, principal):
+            # 計算各標的平均成本
+            for sid in stocks:
+                if stocks[sid]["sh"] > 0:
+                    stocks[sid]["avg_co"] = stocks[sid]["total_cost"] / stocks[sid]["sh"]
+                else: stocks[sid]["avg_co"] = 0.0
+                
+        return df_t, stocks, total_injected_cash
+    except Exception as e:
+        st.warning(f"讀取失敗: {e}")
+        return pd.DataFrame(), {}, 0.0
+
+def add_transaction(t_type, sid, sh, pr, note):
     client = get_client()
-    if not client: 
-        st.error("❌ 無法連線雲端，請檢查 Secrets。")
-        return
+    if not client: return
     try:
         doc = client.open_by_key(GS_ID)
-        # 1. 寫入持股
-        ws_s = doc.worksheet("Stocks")
-        ws_s.clear()
-        data_s = [["id", "sh", "co"]] + [[k, float(v['sh']), float(v['co'])] for k, v in stocks.items()]
-        ws_s.update(values=data_s, range_name='A1')
-        # 2. 寫入本金
-        ws_v = doc.worksheet("Settings")
-        ws_v.clear()
-        ws_v.update(values=[["key", "value"], ["principal", float(principal)]], range_name='A1')
-        st.success("✅ 雲端同步完成！")
+        ws_t = doc.worksheet("Transactions")
+        new_row = [datetime.now().strftime("%Y-%m-%d %H:%M"), t_type, sid.upper(), sh, pr, note]
+        ws_t.append_row(new_row)
+        st.success(f"✅ {t_type} 紀錄已新增！")
         st.cache_data.clear()
-    except Exception as e: st.error(f"❌ 同步失敗: {e}")
-
-# --- 3. 視覺樣式與 CSS ---
-st.markdown("<style>.stApp{background-color:#0d1117; color:#c9d1d9;} [data-testid='stMetricValue']>div{color:#00d4ff!important; font-weight:800; font-size:2.6rem!important;} .stat-card{text-align:center; padding:20px; background:#161b22; border-radius:12px; border-top:6px solid #58a6ff; margin-bottom:15px;}</style>", unsafe_allow_html=True)
-
-if 'stocks' not in st.session_state:
-    st.session_state.stocks, st.session_state.principal = load_data()
-
-@st.cache_data(ttl=600)
-def fetch_price(sid):
-    if sid == "CASH": return 1.0, "閒置現金"
-    names = {"00662":"富邦NASDAQ", "00670L":"NASDAQ正2", "00865B":"美債1-3Y", "00631L":"50正2", "0050":"元大50", "2330":"台積電"}
-    d_name = names.get(sid, sid)
-    for suf in [".TW", ".TWO", ""]:
-        try:
-            t = yf.Ticker(f"{sid}{suf}")
-            p = t.fast_info.last_price
-            if p > 0: return float(p), d_name
-        except: continue
-    return 0.0, d_name
-
-# --- 4. 計算數據 ---
-total_mkt, s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0, 0.0
-rows = []
-for sid, v in st.session_state.stocks.items():
-    p, name = fetch_price(sid)
-    m = v['sh'] * p
-    total_mkt += m
-    if sid == "CASH": c_val += m
-    elif "B" in sid: b_val += m
-    elif "L" in sid: l_val += m
-    else: s_val += m
-    pnl = (p - v['co']) * v['sh']
-    rows.append({"標的": sid, "名稱": name, "現價": f"{p:,.2f}", "股數": f"{v['sh']:,.0f}", "市值": m, "損益": f"{pnl:,.0f}"})
-
-# --- 5. 主介面 ---
-st.title("📊 綜合退休戰情室 V73.6")
-
-col1, col2, col3 = st.columns(3)
-with col1: st.metric("總市值", f"${total_mkt:,.0f}")
-with col2: 
-    st.session_state.principal = st.number_input("本金設定", value=float(st.session_state.principal))
-    if st.button("💾 同步本金設定"): save_data(st.session_state.stocks, st.session_state.principal)
-with col3:
-    pnl_val = total_mkt - st.session_state.principal
-    pct = (pnl_val / st.session_state.principal * 100) if st.session_state.principal > 0 else 0
-    st.metric("總損益", f"${pnl_val:,.0f}", f"{pct:.2f}%")
-
-st.divider()
-
-# 現況方塊
-c1, c2, c3 = st.columns(3)
-def draw_card(title, color, val):
-    p = (val / total_mkt * 100) if total_mkt > 0 else 0
-    st.markdown(f"<div class='stat-card' style='border-top-color:{color};'><small style='color:#8b949e;'>{title}</small><br><b style='color:{color}; font-size:26px;'>{p:.1f}%</b><br><b style='color:{color}; font-size:24px;'>${val:,.0f}</b></div>", unsafe_allow_html=True)
-
-with c1: draw_card("現況 股票", "#58a6ff", s_val)
-with c2: draw_card("現況 槓桿", "#bc8cff", l_val)
-with c3: draw_card("現況 類現金", "#3fb950", b_val + c_val)
-
-st.divider()
-st.subheader("📋 目前持股明細")
-df_d = pd.DataFrame(rows)
-df_d['市值'] = df_d['市值'].apply(lambda x: f"${x:,.0f}")
-st.dataframe(df_d, use_container_width=True, hide_index=True)
-
-with st.sidebar:
-    st.header("⚙️ 雲端操作")
-    new_id = st.text_input("➕ 新增代號").upper().strip()
-    if st.button("確認加入"):
-        if new_id:
-            st.session_state.stocks[new_id] = {"sh": 0.0, "co": 0.0}
-            save_data(st.session_state.stocks, st.session_state.principal)
-            st.rerun()
-    st.divider()
-    target = st.selectbox("修改標的", options=list(st.session_state.stocks.keys()))
-    n_sh = st.number_input("股數", value=float(st.session_state.stocks[target]["sh"]))
-    n_co = st.number_input("成本", value=float(st.session_state.stocks[target]["co"]))
-    if st.button("💾 儲存修改"):
-        st.session_state.stocks[target] = {"sh": n_sh, "co": n_co}
-        save_data(st.session_state.stocks, st.session_state.principal)
         st.rerun()
+    except Exception as e: st.error(f"新增失敗: {e}")
+
+# --- 3. 畫面呈現 ---
+df_history, current_stocks, total_cash_input = load_all_data()
+
+st.title("📊 退休戰情室 V74.0 - 自動累計版")
+
+# 指標列
+total_mkt = 0.0
+rows = []
+for sid, v in current_stocks.items():
+    if v['sh'] <= 0: continue
+    # 抓取現價
+    try:
+        t = yf.Ticker(f"{sid}.TW" if sid.isdigit() else sid)
+        p = t.fast_info.last_price
+    except: p = 0.0
+    
+    mkt_val = v['sh'] * p
+    total_mkt += mkt_val
+    pnl = (p - v['avg_co']) * v['sh']
+    rows.append({"標的": sid, "現價": p, "股數": v['sh'], "平均成本": v['avg_co'], "市值": mkt_val, "損益": pnl})
+
+m1, m2, m3 = st.columns(3)
+with m1: st.metric("總市值", f"${total_mkt:,.0f}")
+with m2: st.metric("累計投入本金", f"${total_cash_input:,.0f}")
+with m3:
+    pnl_total = total_mkt - total_cash_input
+    pct = (pnl_total / total_cash_input * 100) if total_cash_input > 0 else 0
+    st.metric("總實現+未實現損益", f"${pnl_total:,.0f}", f"{pct:.2f}%")
+
+st.divider()
+
+# --- 4. 側邊欄：新增交易明細 ---
+with st.sidebar:
+    st.header("🖊️ 新增交易紀錄")
+    act_type = st.selectbox("動作類型", ["買入", "賣出", "入金", "出金"])
+    
+    if act_type in ["買入", "賣出"]:
+        t_id = st.text_input("股票代號 (如 00662)")
+        t_sh = st.number_input("成交股數", min_value=0.0, step=1.0)
+        t_pr = st.number_input("成交單價", min_value=0.0)
+    else:
+        t_id = "CASH"
+        t_sh = st.number_input("金額", min_value=0.0, step=1000.0)
+        t_pr = 1.0
+        
+    t_note = st.text_input("備註")
+    if st.button("送出交易明細"):
+        add_transaction(act_type, t_id, t_sh, t_pr, t_note)
+
+# --- 5. 顯示表格 ---
+tab1, tab2 = st.tabs(["📈 目前持股匯總", "📜 歷史交易明細"])
+
+with tab1:
+    if rows:
+        df_display = pd.DataFrame(rows)
+        st.dataframe(df_display.style.format({
+            "現價": "{:,.2f}", "股數": "{:,.0f}", "平均成本": "{:,.2f}", 
+            "市值": "${:,.0f}", "損益": "${:,.0f}"
+        }), use_container_width=True, hide_index=True)
+    else:
+        st.info("目前尚無持股紀錄。")
+
+with tab2:
+    if not df_history.empty:
+        st.dataframe(df_history.sort_index(ascending=False), use_container_width=True, hide_index=True)
+    else:
+        st.info("尚無交易明細。")
