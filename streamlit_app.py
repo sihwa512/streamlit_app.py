@@ -6,7 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V70.9", layout="wide")
+st.set_page_config(page_title="綜合退休戰情室 V71.0", layout="wide")
 
 # --- 1. Google Sheets 連接邏輯 ---
 GS_FILENAME = "Retirement_Cloud_Data"
@@ -45,53 +45,73 @@ def save_data_to_gs(stocks):
         st.toast("✅ 數據同步完成")
     except: st.error("❌ 雲端存檔失敗")
 
-# --- 2. 靈魂 CSS：重塑視覺協調性 ---
+# --- 2. 靈魂 CSS：解決字體太淡問題 ---
 st.markdown("""
     <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
     
-    /* 頂部三方塊美化 */
+    /* 核心指標字體強化：解決太淡的問題 */
+    [data-testid="stMetricValue"] > div {
+        color: #00d4ff !important; 
+        font-family: 'Consolas', monospace !important;
+        font-size: 2.2rem !important;
+        font-weight: 800 !important;
+        opacity: 1 !important; /* 強制不透明 */
+    }
+    [data-testid="stMetricLabel"] > div {
+        color: #ffffff !important;
+        font-weight: bold !important;
+        opacity: 0.9 !important;
+    }
+    
+    /* 方塊容器美化 */
     [data-testid="stMetric"] {
         background: #161b22;
         border: 1px solid #30363d;
         border-radius: 12px;
         padding: 20px !important;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.3);
     }
-    
-    /* 針對現況方塊的精細微調 */
+
     .stat-card {
         text-align: center; 
         padding: 15px; 
         background: #161b22; 
         border-radius: 12px; 
         border: 1px solid #30363d;
-        margin-bottom: 10px;
     }
     
-    /* 輸入框與標籤對齊 */
-    .stNumberInput label { font-size: 0.85rem !important; color: #8b949e !important; margin-bottom: 5px !important; }
+    h1, h2, h3 { color: #58a6ff !important; }
     
-    /* 標題顏色 */
-    h1, h2, h3 { color: #58a6ff !important; font-family: 'Segoe UI', sans-serif; }
-    
-    /* 表格樣式 */
-    .stDataFrame { border-radius: 10px; border: 1px solid #30363d; }
+    /* 隱藏標題後面的連結符號 */
+    .stMarkdown a { text-decoration: none; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. 強化報價抓取 ---
+# --- 3. 股票中文簡稱對照表 ---
+STOCK_NAMES = {
+    "00662": "富邦NASDAQ",
+    "00670L": "富邦NASDAQ正2",
+    "00865B": "國泰美債1-3Y",
+    "00631L": "元大台灣50正2",
+    "0050": "元大台灣50",
+    "2330": "台積電",
+    "CASH": "閒置現金"
+}
+
 def fetch_price(symbol):
-    if symbol == "CASH": return 1.0, "現金部位"
+    if symbol == "CASH": return 1.0, STOCK_NAMES.get("CASH")
+    
+    display_name = STOCK_NAMES.get(symbol, symbol) # 優先使用自訂簡稱
+    
     for suf in [".TW", ".TWO", ""]:
         try:
             t = yf.Ticker(f"{symbol}{suf}")
             p = t.fast_info.last_price
-            if p > 0: return p, t.info.get('shortName', symbol)
+            if p > 0: return p, display_name
             h = t.history(period="1d")
-            if not h.empty: return h['Close'].iloc[-1], t.info.get('shortName', symbol)
+            if not h.empty: return h['Close'].iloc[-1], display_name
         except: continue
-    return 0.0, symbol
+    return 0.0, display_name
 
 # --- 4. 初始化 ---
 if 'stocks' not in st.session_state: st.session_state.stocks = load_data_from_gs()
@@ -101,7 +121,6 @@ total_mkt = 0.0
 s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0
 rows = []
 
-# 預先抓取所有價格
 for sid, v in st.session_state.stocks.items():
     p, name = fetch_price(sid)
     m = v['sh'] * p
@@ -115,54 +134,56 @@ for sid, v in st.session_state.stocks.items():
 safe_val = b_val + c_val
 
 # --- 🚀 主介面佈局 ---
-st.title("📊 綜合退休戰情室 V70.9")
+st.title("📊 綜合退休戰情室 V71.0")
 
-# 第一列：核心指標
+# 第一列：核心指標 (現在字體會非常清晰)
 m1, m2, m3 = st.columns(3)
 with m1: st.metric("資產總市值", f"${total_mkt:,.0f}")
-with m2: st.session_state.principal = st.number_input("投入總本金", value=float(st.session_state.principal))
+with m2: 
+    # 本金輸入框美化
+    st.markdown("<small style='color:#aaa;'>設定投入總本金</small>", unsafe_allow_html=True)
+    st.session_state.principal = st.number_input("Principal_Input", value=float(st.session_state.principal), label_visibility="collapsed")
 with m3:
     true_pnl = total_mkt - st.session_state.principal
     pnl_pct = (true_pnl / st.session_state.principal * 100) if st.session_state.principal > 0 else 0
-    st.metric("真實累積總損益", f"${true_pnl:,.0f}", f"{pnl_pct:.2f}%")
+    # 損益顏色強化
+    pnl_label = "累積淨獲利"
+    st.metric(pnl_label, f"${true_pnl:,.0f}", f"{pnl_pct:.2f}%")
 
 st.divider()
 
 # 第二列：再平衡對照區
 st.subheader("⚖️ 目標再平衡對照")
 curr_beta = (s_val/total_mkt * 1.0 + l_val/total_mkt * 2.0) if total_mkt > 0 else 0
-st.markdown(f"當前組合 Beta: <b style='color:#bc8cff;'>{curr_beta:.2f}</b>", unsafe_allow_html=True)
+st.markdown(f"當前組合 Beta: <b style='color:#bc8cff; font-size:1.2rem;'>{curr_beta:.2f}</b>", unsafe_allow_html=True)
 
-# 佈局現況
 c1, c2, c3 = st.columns(3)
 def stat_box(label, color, val, pct):
-    return f"""<div class='stat-card' style='border-top: 4px solid {color};'>
-        <small style='color:#8b949e;'>{label}</small><br>
-        <b style='color:{color}; font-size:24px;'>{pct:.1f}%</b><br>
-        <b style='color:{color}; font-size:20px;'>${val:,.0f}</b>
+    return f"""<div class='stat-card' style='border-top: 5px solid {color};'>
+        <small style='color:#8b949e; font-weight:bold;'>{label}</small><br>
+        <b style='color:{color}; font-size:28px;'>{pct:.1f}%</b><br>
+        <b style='color:{color}; font-size:24px;'>${val:,.0f}</b>
     </div>"""
 
 with c1: st.markdown(stat_box("現況 股票", "#58a6ff", s_val, (s_val/total_mkt*100 if total_mkt>0 else 0)), unsafe_allow_html=True)
 with c2: st.markdown(stat_box("現況 槓桿", "#bc8cff", l_val, (l_val/total_mkt*100 if total_mkt>0 else 0)), unsafe_allow_html=True)
 with c3: st.markdown(stat_box("現況 類現金", "#3fb950", safe_val, (safe_val/total_mkt*100 if total_mkt>0 else 0)), unsafe_allow_html=True)
 
-# 佈局目標輸入
 st.write("")
 t1, t2, t3 = st.columns(3)
 with t1: ts = st.number_input("目標 股票 %", value=40)
 with t2: tl = st.number_input("目標 槓桿 %", value=30)
 with t3:
     t_safe = 100 - ts - tl
-    st.markdown(f"""<div style='text-align:center; padding:5px;'>
+    st.markdown(f"""<div style='text-align:center; padding:5px; background:rgba(63,185,80,0.1); border-radius:10px;'>
         <small style='color:#8b949e;'>目標 類現金</small><br>
         <b style='color:#3fb950; font-size:24px;'>{t_safe}%</b>
     </div>""", unsafe_allow_html=True)
 
-# 目標金額顯示
-st.markdown(f"""<div style='display:flex; justify-content:space-around; background:rgba(255,159,28,0.05); padding:10px; border-radius:8px;'>
-    <div style='color:#58a6ff;'>目標: ${total_mkt*ts/100:,.0f}</div>
-    <div style='color:#bc8cff;'>目標: ${total_mkt*tl/100:,.0f}</div>
-    <div style='color:#3fb950;'>目標: ${total_mkt*t_safe/100:,.0f}</div>
+st.markdown(f"""<div style='display:flex; justify-content:space-around; background:rgba(255,159,28,0.1); padding:12px; border-radius:8px; border: 1px solid #ff9f1c;'>
+    <div style='color:#58a6ff; font-weight:bold;'>股票目標: ${total_mkt*ts/100:,.0f}</div>
+    <div style='color:#bc8cff; font-weight:bold;'>槓桿目標: ${total_mkt*tl/100:,.0f}</div>
+    <div style='color:#3fb950; font-weight:bold;'>類現金目標: ${total_mkt*t_safe/100:,.0f}</div>
 </div>""", unsafe_allow_html=True)
 
 st.divider()
@@ -174,16 +195,13 @@ with col_pie:
     if total_mkt > 0:
         fig = go.Figure(data=[go.Pie(labels=['股票', '槓桿', '債券', '現金'], values=[s_val, l_val, b_val, c_val], 
                                      marker=dict(colors=['#58a6ff', '#bc8cff', '#ff9f1c', '#3fb950']), hole=.5)])
-        fig.update_layout(template="plotly_dark", margin=dict(t=0,b=0,l=0,r=0), showlegend=True, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
+        fig.update_layout(template="plotly_dark", margin=dict(t=0,b=0,l=0,r=0), showlegend=True, paper_bgcolor='rgba(0,0,0,0)')
         st.plotly_chart(fig, use_container_width=True)
-    else:
-        st.info("尚無資產數據可顯示圖表")
 
 with col_table:
     st.subheader("📋 目前庫存清單")
     if rows:
         df = pd.DataFrame(rows)
-        # 美化表格市值顯示
         df['市值'] = df['市值'].apply(lambda x: f"${x:,.0f}")
         st.dataframe(df, use_container_width=True, hide_index=True)
 
