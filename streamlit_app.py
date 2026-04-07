@@ -7,125 +7,141 @@ from google.oauth2.service_account import Credentials
 import re
 
 # --- 1. 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V72.9", layout="wide")
+st.set_page_config(page_title="綜合退休戰情室 V73.0", layout="wide")
 
-# --- 2. 雲端連線設定 (ID 已確認) ---
-GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs" 
+# --- 2. 雲端連線 ---
+GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 
-def get_gspread_client():
+def get_client():
     try:
         scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        creds_info = dict(st.secrets["gcp_service_account"])
-        if "private_key" in creds_info:
-            pk = creds_info["private_key"].replace("\\n", "\n")
-            pk = re.sub(r'[^\x20-\x7E\n]', '', pk)
-            creds_info["private_key"] = pk
-        return gspread.authorize(Credentials.from_service_account_info(creds_info, scopes=scope))
+        creds = dict(st.secrets["gcp_service_account"])
+        if "private_key" in creds:
+            creds["private_key"] = creds["private_key"].replace("\\n", "\n")
+            creds["private_key"] = re.sub(r'[^\x20-\x7E\n]', '', creds["private_key"])
+        return gspread.authorize(Credentials.from_service_account_info(creds, scopes=scope))
     except: return None
 
-def load_data_from_gs():
-    client = get_gspread_client()
-    if not client: return {"CASH": {"sh": 0.0, "co": 1.0}}, 0.0
+def load_data():
+    client = get_client()
+    # 預設值，防崩潰
+    default_stocks = {"CASH": {"sh": 200000.0, "co": 1.0}}
+    default_p = 50000.0
+    if not client: return default_stocks, default_p
     try:
         doc = client.open_by_key(GS_ID)
+        # 讀取 Stocks
         ws_s = doc.worksheet("Stocks")
-        s_data = ws_s.get_all_values()
+        all_v = ws_s.get_all_values()
         stocks = {}
-        if len(s_data) > 1:
-            for r in s_data[1:]:
-                if r[0]: 
-                    # 讀取時也進行清理
-                    sid = str(r[0]).upper().strip()
-                    stocks[sid] = {"sh": round(float(r[1] or 0), 2), "co": round(float(r[2] or 0), 2)}
-        else: stocks = {"CASH": {"sh": 0.0, "co": 1.0}}
-            
-        ws_v = doc.worksheet("Settings")
-        v_data = ws_v.get_all_values()
-        principal = round(float(v_data[1][1]), 0) if len(v_data) > 1 else 0.0
+        if len(all_v) > 1:
+            for r in all_v[1:]:
+                if r[0]: stocks[str(r[0]).upper().strip()] = {"sh": float(r[1] or 0), "co": float(r[2] or 0)}
+        else: stocks = default_stocks
+        # 讀取本金
+        try:
+            ws_v = doc.worksheet("Settings")
+            v_v = ws_v.get_all_values()
+            principal = float(v_v[1][1]) if len(v_v) > 1 else default_p
+        except: principal = default_p
         return stocks, principal
-    except: return {"CASH": {"sh": 0.0, "co": 1.0}}, 0.0
+    except: return default_stocks, default_p
 
-def save_data_to_gs(stocks, principal):
-    client = get_gspread_client()
+def save_data(stocks, principal):
+    client = get_client()
     if not client: return
     try:
         doc = client.open_by_key(GS_ID)
-        
-        # 🌟 核心修正：將數據強制格式化為乾淨的數字
+        # 寫入 Stocks
         ws_s = doc.worksheet("Stocks")
-        # 標題行
-        clean_list = [["id", "sh", "co"]]
-        for sid, v in stocks.items():
-            # 這裡強制四捨五入到小數點第二位，解決 98849.9985 這種碎碎的數字問題
-            clean_list.append([sid, round(float(v['sh']), 2), round(float(v['co']), 2)])
-        
-        ws_s.update(clean_list, "A1") 
-        
-        # 儲存本金
+        data = [["id", "sh", "co"]] + [[k, float(v['sh']), float(v['co'])] for k, v in stocks.items()]
+        ws_s.update(data, "A1")
+        # 寫入 Settings
         ws_v = doc.worksheet("Settings")
-        ws_v.update([["key", "value"], ["principal", round(float(principal), 0)]], "A1")
-        
-        st.success("✅ 雲端同步完成！請重新整理試算表頁面確認。")
+        ws_v.update([["key", "value"], ["principal", float(principal)]], "A1")
+        st.success("✅ 雲端同步成功！")
         st.cache_data.clear()
-    except Exception as e:
-        st.error(f"❌ 同步失敗: {e}")
+    except Exception as e: st.error(f"同步出錯: {e}")
 
-# --- 3. 視覺樣式與報價 ---
-st.markdown("<style>.stApp{background-color:#0d1117; color:#c9d1d9;} [data-testid='stMetricValue']>div{color:#00d4ff!important; font-weight:800!important; opacity:1!important;}</style>", unsafe_allow_html=True)
+# --- 3. 視覺樣式 ---
+st.markdown("""
+    <style>
+    .stApp { background-color: #0d1117; color: #c9d1d9; }
+    [data-testid="stMetricValue"] > div { color: #00d4ff !important; font-family: 'Consolas'; font-size: 2.6rem !important; font-weight: 800 !important; }
+    .stat-card { text-align: center; padding: 20px; background: #161b22; border-radius: 12px; border: 1px solid #30363d; margin-bottom: 15px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+# --- 4. 數據引擎 ---
+if 'stocks' not in st.session_state:
+    st.session_state.stocks, st.session_state.principal = load_data()
 
 @st.cache_data(ttl=600)
-def fetch_price(symbol):
-    if symbol == "CASH": return 1.0, "現金"
+def fetch_price(sid):
+    if sid == "CASH": return 1.0, "閒置現金"
+    names = {"00662":"富邦NASDAQ", "00670L":"NASDAQ正2", "00865B":"美債1-3Y", "00631L":"50正2", "0050":"元大50", "2330":"台積電"}
     for suf in [".TW", ".TWO", ""]:
         try:
-            t = yf.Ticker(f"{symbol}{suf}")
+            t = yf.Ticker(f"{sid}{suf}")
             p = t.fast_info.last_price
-            if p > 0: return float(p), symbol
+            if p > 0: return float(p), names.get(sid, sid)
         except: continue
-    return 0.0, symbol
-
-# --- 4. 初始化 ---
-if 'stocks' not in st.session_state:
-    st.session_state.stocks, st.session_state.principal = load_data_from_gs()
+    return 0.0, names.get(sid, sid)
 
 total_mkt, s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0, 0.0
 rows = []
 for sid, v in st.session_state.stocks.items():
     p, name = fetch_price(sid)
-    m = round(v['sh'] * p, 0) # 市值取整數
+    m = v['sh'] * p
     total_mkt += m
     if sid == "CASH": c_val += m
     elif "B" in sid: b_val += m
     elif "L" in sid: l_val += m
     else: s_val += m
-    
-    unrealized = round((p - v['co']) * v['sh'], 0)
-    rows.append({"標的": sid, "現價": f"{p:,.2f}", "股數": f"{v['sh']:,.0f}", "市值": f"${m:,.0f}", "損益": f"${unrealized:,.0f}"})
+    pnl = (p - v['co']) * v['sh']
+    rows.append({"標的": sid, "名稱": name, "現價": f"{p:,.2f}", "股數": f"{v['sh']:,.0f}", "市值": f"${m:,.0f}", "損益": f"${pnl:,.0f}"})
 
-# --- 5. 畫面 ---
-st.title("📊 綜合退休戰情室 V72.9")
+# --- 5. 畫面呈現 ---
+st.title("📊 綜合退休戰情室 V73.0")
 
-m1, m2, m3 = st.columns(3)
-with m1: st.metric("總市值", f"${total_mkt:,.0f}")
-with m2: 
+col1, col2, col3 = st.columns(3)
+with col1: st.metric("總市值", f"${total_mkt:,.0f}")
+with col2: 
     new_p = st.number_input("本金設定", value=float(st.session_state.principal))
-    if st.button("💾 儲存並同步至雲端"):
+    if st.button("💾 儲存並同步"):
         st.session_state.principal = new_p
-        save_data_to_gs(st.session_state.stocks, new_p)
+        save_data(st.session_state.stocks, new_p)
         st.rerun()
-with m3:
-    pnl = total_mkt - st.session_state.principal
-    st.metric("總損益", f"${pnl:,.0f}", f"{(pnl/st.session_state.principal*100 if st.session_state.principal>0 else 0):.2f}%")
+with col3:
+    true_pnl = total_mkt - st.session_state.principal
+    pct = (true_pnl / st.session_state.principal * 100) if st.session_state.principal > 0 else 0
+    st.metric("總損益", f"${true_pnl:,.0f}", f"{pct:.2f}%")
 
 st.divider()
-st.table(pd.DataFrame(rows)) # 使用靜態表格更清楚
+
+# 方塊對應
+c1, c2, c3 = st.columns(3)
+def stat_box(label, color, val):
+    pct = (val / total_mkt * 100) if total_mkt > 0 else 0
+    return f"<div class='stat-card' style='border-top:6px solid {color};'><small style='color:#8b949e;'>{label}</small><br><b style='color:{color}; font-size:26px;'>{pct:.1f}%</b><br><b style='color:{color}; font-size:24px;'>${val:,.0f}</b></div>"
+with c1: st.markdown(stat_box("現況 股票", "#58a6ff", s_val), unsafe_allow_html=True)
+with c2: st.markdown(stat_box("現況 槓桿", "#bc8cff", l_val), unsafe_allow_html=True)
+with c3: st.markdown(stat_box("現況 類現金", "#3fb950", b_val + c_val), unsafe_allow_html=True)
+
+st.divider()
+
+# 表格
+st.subheader("📋 持股明細清單")
+st.table(pd.DataFrame(rows))
 
 with st.sidebar:
-    st.header("⚙️ 修改資料")
-    target = st.selectbox("標的", options=list(st.session_state.stocks.keys()))
+    st.header("⚙️ 雲端操作")
+    if st.button("🔄 強制重新整理"): st.cache_data.clear(); st.rerun()
+    st.divider()
+    target = st.selectbox("修改標的", options=list(st.session_state.stocks.keys()))
     new_sh = st.number_input("股數", value=float(st.session_state.stocks[target]["sh"]))
     new_co = st.number_input("成本", value=float(st.session_state.stocks[target]["co"]))
-    if st.button("💾 確認修改並存檔"):
+    if st.button("💾 確認修改內容"):
         st.session_state.stocks[target] = {"sh": new_sh, "co": new_co}
-        save_data_to_gs(st.session_state.stocks, st.session_state.principal)
+        save_data(st.session_state.stocks, st.session_state.principal)
         st.rerun()
