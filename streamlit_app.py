@@ -4,10 +4,9 @@ import yfinance as yf
 import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
-import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V70.7", layout="wide")
+st.set_page_config(page_title="綜合退休戰情室 V70.8", layout="wide")
 
 # --- 1. Google Sheets 連接邏輯 ---
 GS_FILENAME = "Retirement_Cloud_Data"
@@ -15,6 +14,7 @@ GS_SHEETNAME = "Stocks"
 
 def get_gspread_client():
     scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+    # 這裡會讀取您在 Secrets 設定的內容
     creds_dict = st.secrets["gcp_service_account"]
     creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
     return gspread.authorize(creds)
@@ -49,85 +49,53 @@ def save_data_to_gs(stocks):
     except Exception as e:
         st.error(f"❌ 雲端存檔失敗: {e}")
 
-# --- 2. 樣式 CSS ---
+# --- 2. 靈魂 CSS ---
 st.markdown("""
     <style>
     .stApp { background-color: #0f111a; color: #e0e0e0; }
-    [data-testid="stMetric"] {
-        background: linear-gradient(145deg, #1b1e2e, #161926);
-        border: 1px solid #333; border-radius: 15px; padding: 15px !important;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-    }
+    [data-testid="stMetric"] { background: linear-gradient(145deg, #1b1e2e, #161926); border: 1px solid #333; border-radius: 15px; padding: 15px !important; }
     h1, h2, h3 { color: #00d4ff !important; font-weight: 700 !important; }
-    .log-box { background: #111; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; color: #888; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. 終極報價引擎 ---
-def fetch_price_logic(symbol):
-    if symbol == "CASH":
-        return 1.0, "現金部位", "OK"
-    
-    # 嘗試多種台灣後綴格式
-    suffixes = [".TW", ".TWO", ""]
-    for suf in suffixes:
-        test_sym = f"{symbol}{suf}"
+# --- 3. 強化報價抓取 ---
+def fetch_price(symbol):
+    if symbol == "CASH": return 1.0, "現金部位"
+    # 嘗試不同後綴
+    for suf in [".TW", ".TWO", ""]:
         try:
-            ticker = yf.Ticker(test_sym)
-            # 優先嘗試 fast_info (最快)
-            price = ticker.fast_info.last_price
-            
-            # 若為 NaN 則嘗試從歷史紀錄拿最後一筆收盤價
-            if pd.isna(price) or price == 0:
-                hist = ticker.history(period="1d")
-                if not hist.empty:
-                    price = hist['Close'].iloc[-1]
-            
-            if not pd.isna(price) and price > 0:
-                name = ticker.info.get('shortName', symbol)
-                return float(price), name, f"Success({test_sym})"
-        except:
-            continue
-            
-    return 0.0, symbol, "Failed (All Methods)"
+            t = yf.Ticker(f"{symbol}{suf}")
+            p = t.fast_info.last_price
+            if p > 0: return p, t.info.get('shortName', symbol)
+            # 歷史收盤備案
+            h = t.history(period="1d")
+            if not h.empty: return h['Close'].iloc[-1], t.info.get('shortName', symbol)
+        except: continue
+    return 0.0, symbol
 
-# 使用 st.cache_data 確保效能，但允許手動清除
-@st.cache_data(ttl=600)
-def get_stock_info_cached(symbol):
-    return fetch_price_logic(symbol)
-
-# --- 4. 數據處理 ---
+# --- 4. 資料初始化 ---
 if 'stocks' not in st.session_state:
     st.session_state.stocks = load_data_from_gs()
 if 'principal' not in st.session_state:
     st.session_state.principal = 0.0
 
+# 計算
 total_mkt = 0.0
 s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0
 processed_rows = []
-debug_logs = []
 
-# 遍歷持股並抓取
 for sid, v in st.session_state.stocks.items():
-    price, name, status = get_stock_info_cached(sid)
-    mkt = v['sh'] * price
-    total_mkt += mkt
-    
-    if sid == "CASH": c_val += mkt
-    elif "B" in sid: b_val += mkt
-    elif "L" in sid: l_val += mkt
-    else: s_val += mkt
-    
-    processed_rows.append({
-        "標的": sid, "名稱": name, "現價": f"{price:,.2f}", 
-        "股數": f"{v['sh']:,.0f}", "市值": round(mkt, 0)
-    })
-    debug_logs.append(f"Symbol: {sid} | Status: {status} | Price: {price}")
+    p, name = fetch_price(sid)
+    m = v['sh'] * p
+    total_mkt += m
+    if sid == "CASH": c_val += m
+    elif "B" in sid: b_val += m
+    elif "L" in sid: l_val += m
+    else: s_val += m
+    processed_rows.append({"標的": sid, "名稱": name, "現價": f"{p:,.2f}", "股數": f"{v['sh']:,.0f}", "市值": round(m,0)})
 
-safe_val = b_val + c_val
-
-# --- 5. 主介面 ---
-st.title("📊 綜合退休戰情室 V70.7 Cloud")
+# --- 5. 介面呈現 ---
+st.title("📊 綜合退休戰情室 V70.8 Cloud")
 
 col1, col2, col3 = st.columns(3)
 with col1: st.metric("資產總市值", f"${total_mkt:,.0f}")
@@ -139,70 +107,45 @@ with col3:
 
 st.divider()
 
-# 現況方塊 (HTML 版排版)
-st.subheader("⚖️ 目標再平衡對照")
-cur1, cur2, cur3 = st.columns(3)
+# 現況方塊樣式 (顏色金額大小同步)
 def card_html(label, color, pct, val):
-    return f"<div style='text-align:center; padding:15px; background:rgba(255,255,255,0.03); border:1px solid {color}44; border-radius:12px;'><small style='color:#aaa;'>{label}</small><br><b style='color:{color}; font-size:26px;'>{pct:.1f}%</b><br><b style='color:{color}; font-size:22px;'>${val:,.0f}</b></div>"
+    return f"<div style='text-align:center; padding:15px; background:#161926; border:1px solid {color}44; border-radius:12px;'><small style='color:#aaa;'>{label}</small><br><b style='color:{color}; font-size:26px;'>{pct:.1f}%</b><br><b style='color:{color}; font-size:22px;'>${val:,.0f}</b></div>"
 
-with cur1: st.markdown(card_html("現況 股票", "#00d4ff", (s_val/total_mkt*100 if total_mkt>0 else 0), s_val), unsafe_allow_html=True)
-with cur2: st.markdown(card_html("現況 槓桿", "#bd93f9", (l_val/total_mkt*100 if total_mkt>0 else 0), l_val), unsafe_allow_html=True)
-with cur3: st.markdown(card_html("現況 類現金", "#00ff88", (safe_val/total_mkt*100 if total_mkt>0 else 0), safe_val), unsafe_allow_html=True)
+c1, c2, c3 = st.columns(3)
+with c1: st.markdown(card_html("現況 股票", "#00d4ff", (s_val/total_mkt*100 if total_mkt>0 else 0), s_val), unsafe_allow_html=True)
+with c2: st.markdown(card_html("現況 槓桿", "#bd93f9", (l_val/total_mkt*100 if total_mkt>0 else 0), l_val), unsafe_allow_html=True)
+with c3: st.markdown(card_html("現況 類現金", "#00ff88", ((b_val+c_val)/total_mkt*100 if total_mkt>0 else 0), (b_val+c_val)), unsafe_allow_html=True)
 
 st.write("")
-t_col1, t_col2, t_col3 = st.columns(3)
-with t_col1: 
-    ts = st.number_input("目標 股票 %", value=40)
-    st.markdown(f"<div style='text-align:center; color:#00d4ff; font-weight:bold;'>目標: ${total_mkt * ts/100:,.0f}</div>", unsafe_allow_html=True)
-with t_col2: 
-    tl = st.number_input("目標 槓桿 %", value=30)
-    st.markdown(f"<div style='text-align:center; color:#bd93f9; font-weight:bold;'>目標: ${total_mkt * tl/100:,.0f}</div>", unsafe_allow_html=True)
-with t_col3: 
-    t_safe_pct = 100 - ts - tl
-    st.markdown(f"<div style='text-align:center; padding-top:10px;'><small style='color:#aaa;'>目標 類現金</small><br><b style='color:#00ff88; font-size:24px;'>{t_safe_pct}%</b><br><b style='color:#00ff88; font-weight:bold;'>目標: ${total_mkt * t_safe_pct/100:,.0f}</b></div>", unsafe_allow_html=True)
+t1, t2, t3 = st.columns(3)
+with t1: ts = st.number_input("目標 股票 %", value=40)
+with t2: tl = st.number_input("目標 槓桿 %", value=30)
+with t3: 
+    t_safe = 100 - ts - tl
+    st.markdown(f"<div style='text-align:center;'><small style='color:#aaa;'>目標 類現金</small><br><b style='color:#00ff88; font-size:24px;'>{t_safe}%</b><br><b style='color:#00ff88; font-size:20px;'>目標: ${total_mkt * t_safe/100:,.0f}</b></div>", unsafe_allow_html=True)
 
 st.divider()
 
-# 圖表區
-c_pie, c_table = st.columns([1, 1.5])
-with c_pie:
-    st.subheader("🍩 資產配置佔比")
+# 圓餅圖 (維持細分)
+cp, ct = st.columns([1, 1.5])
+with cp:
     fig = go.Figure(data=[go.Pie(labels=['股票', '槓桿', '債券', '現金'], values=[s_val, l_val, b_val, c_val], marker=dict(colors=['#00d4ff', '#bd93f9', '#ff9f1c', '#00ff88']), hole=.4)])
     fig.update_layout(template="plotly_dark", margin=dict(t=0,b=0,l=0,r=0))
     st.plotly_chart(fig, use_container_width=True)
+with ct:
+    st.subheader("📋 目前標的庫存")
+    st.dataframe(pd.DataFrame(processed_rows), use_container_width=True, hide_index=True)
 
-with c_table:
-    st.subheader("📋 目前庫存清單")
-    if processed_rows:
-        st.dataframe(pd.DataFrame(processed_rows), use_container_width=True, hide_index=True)
-
-# 偵錯日誌區
-with st.expander("🛠️ 報價系統偵錯日誌"):
-    for log in debug_logs:
-        st.text(log)
-
-# 側邊欄
 with st.sidebar:
-    st.header("⚙️ 雲端中心")
-    if st.button("🚀 強制刷新 (清除快取)"):
+    st.header("⚙️ 雲端同步")
+    if st.button("🚀 強制刷新數據"):
         st.cache_data.clear()
         st.session_state.stocks = load_data_from_gs()
         st.rerun()
-    
     st.divider()
-    add_id = st.text_input("新增代號 (如 00662 / 2330)").upper().strip()
+    add_id = st.text_input("新增代號").upper().strip()
     if st.button("➕ 新增入池"):
-        if add_id and add_id not in st.session_state.stocks:
+        if add_id:
             st.session_state.stocks[add_id] = {"sh": 0.0, "co": 0.0}
-            save_data_to_gs(st.session_state.stocks)
-            st.rerun()
-
-    st.divider()
-    st.write("📊 **數據調整**")
-    if list(st.session_state.stocks.keys()):
-        target_stk = st.selectbox("選取標的", options=list(st.session_state.stocks.keys()))
-        new_sh = st.number_input("修改股數", value=float(st.session_state.stocks[target_stk]["sh"]))
-        if st.button("💾 儲存修改"):
-            st.session_state.stocks[target_stk]["sh"] = new_sh
             save_data_to_gs(st.session_state.stocks)
             st.rerun()
