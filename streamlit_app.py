@@ -4,9 +4,10 @@ import yfinance as yf
 import plotly.graph_objects as go
 import gspread
 from google.oauth2.service_account import Credentials
+import time
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V70.6", layout="wide")
+st.set_page_config(page_title="綜合退休戰情室 V70.7", layout="wide")
 
 # --- 1. Google Sheets 連接邏輯 ---
 GS_FILENAME = "Retirement_Cloud_Data"
@@ -32,7 +33,7 @@ def load_data_from_gs():
             stocks = {"CASH": {"sh": 0.0, "co": 1.0}}
         return stocks
     except Exception as e:
-        st.error(f"連線 Google Sheets 失敗: {e}")
+        st.error(f"❌ Google Sheets 連線失敗: {e}")
         return {"CASH": {"sh": 0.0, "co": 1.0}}
 
 def save_data_to_gs(stocks):
@@ -44,9 +45,9 @@ def save_data_to_gs(stocks):
             data_to_save.append([sid, v['sh'], v['co']])
         sh.clear()
         sh.update("A1", data_to_save)
-        st.toast("✅ 數據已成功同步至雲端")
+        st.toast("✅ 數據同步成功")
     except Exception as e:
-        st.error(f"存檔失敗: {e}")
+        st.error(f"❌ 雲端存檔失敗: {e}")
 
 # --- 2. 樣式 CSS ---
 st.markdown("""
@@ -57,51 +58,43 @@ st.markdown("""
         border: 1px solid #333; border-radius: 15px; padding: 15px !important;
         box-shadow: 0 4px 15px rgba(0,0,0,0.4);
     }
-    [data-testid="stMetricValue"] > div { font-family: 'Consolas', monospace; color: #00d4ff !important; font-size: 1.8rem !important; }
-    .stNumberInput input { background-color: #252836 !important; color: white !important; border: 1px solid #555 !important; }
     h1, h2, h3 { color: #00d4ff !important; font-weight: 700 !important; }
+    .log-box { background: #111; padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px; color: #888; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 3. 強化版報價抓取引擎 ---
-@st.cache_data(ttl=600) # 每 10 分鐘更新一次報價
-def get_stock_info(symbol):
+# --- 3. 終極報價引擎 ---
+def fetch_price_logic(symbol):
     if symbol == "CASH":
-        return 1.0, "現金部位"
+        return 1.0, "現金部位", "OK"
     
-    # 針對台灣市場代號優化
-    full_symbol = symbol
-    if "." not in symbol:
-        # 預設先嘗試上市 (.TW)，若無資料再嘗試上櫃 (.TWO)
-        full_symbol = f"{symbol}.TW"
-    
-    try:
-        ticker = yf.Ticker(full_symbol)
-        # 嘗試從 fast_info 拿價格
-        price = ticker.fast_info.last_price
-        
-        # 如果 fast_info 是 NaN，從 info 拿
-        if pd.isna(price) or price == 0:
-            price = ticker.info.get('regularMarketPrice')
-        
-        # 如果還是抓不到，拿最後一個歷史收盤價
-        if pd.isna(price) or price == 0 or price is None:
-            hist = ticker.history(period="1d")
-            if not hist.empty:
-                price = hist['Close'].iloc[-1]
-            else:
-                # 嘗試上櫃格式
-                if ".TW" in full_symbol:
-                    alt_symbol = symbol.replace(".TW", "") + ".TWO"
-                    ticker = yf.Ticker(alt_symbol)
-                    hist = ticker.history(period="1d")
-                    if not hist.empty:
-                        price = hist['Close'].iloc[-1]
-        
-        name = ticker.info.get('shortName', symbol)
-        return float(price), name
-    except:
-        return 0.0, symbol
+    # 嘗試多種台灣後綴格式
+    suffixes = [".TW", ".TWO", ""]
+    for suf in suffixes:
+        test_sym = f"{symbol}{suf}"
+        try:
+            ticker = yf.Ticker(test_sym)
+            # 優先嘗試 fast_info (最快)
+            price = ticker.fast_info.last_price
+            
+            # 若為 NaN 則嘗試從歷史紀錄拿最後一筆收盤價
+            if pd.isna(price) or price == 0:
+                hist = ticker.history(period="1d")
+                if not hist.empty:
+                    price = hist['Close'].iloc[-1]
+            
+            if not pd.isna(price) and price > 0:
+                name = ticker.info.get('shortName', symbol)
+                return float(price), name, f"Success({test_sym})"
+        except:
+            continue
+            
+    return 0.0, symbol, "Failed (All Methods)"
+
+# 使用 st.cache_data 確保效能，但允許手動清除
+@st.cache_data(ttl=600)
+def get_stock_info_cached(symbol):
+    return fetch_price_logic(symbol)
 
 # --- 4. 數據處理 ---
 if 'stocks' not in st.session_state:
@@ -112,28 +105,29 @@ if 'principal' not in st.session_state:
 total_mkt = 0.0
 s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0
 processed_rows = []
+debug_logs = []
 
-# 遍歷持股抓取資料
+# 遍歷持股並抓取
 for sid, v in st.session_state.stocks.items():
-    price, name = get_stock_info(sid)
+    price, name, status = get_stock_info_cached(sid)
     mkt = v['sh'] * price
     total_mkt += mkt
+    
     if sid == "CASH": c_val += mkt
     elif "B" in sid: b_val += mkt
     elif "L" in sid: l_val += mkt
     else: s_val += mkt
+    
     processed_rows.append({
-        "標的": sid, 
-        "名稱": name, 
-        "現價": f"{price:,.2f}", 
-        "股數": f"{v['sh']:,.0f}", 
-        "市值": round(mkt, 0)
+        "標的": sid, "名稱": name, "現價": f"{price:,.2f}", 
+        "股數": f"{v['sh']:,.0f}", "市值": round(mkt, 0)
     })
+    debug_logs.append(f"Symbol: {sid} | Status: {status} | Price: {price}")
 
 safe_val = b_val + c_val
 
-# --- 5. 主介面呈現 ---
-st.title("📊 綜合退休戰情室 V70.6 Cloud")
+# --- 5. 主介面 ---
+st.title("📊 綜合退休戰情室 V70.7 Cloud")
 
 col1, col2, col3 = st.columns(3)
 with col1: st.metric("資產總市值", f"${total_mkt:,.0f}")
@@ -145,7 +139,7 @@ with col3:
 
 st.divider()
 
-# 現況方塊
+# 現況方塊 (HTML 版排版)
 st.subheader("⚖️ 目標再平衡對照")
 cur1, cur2, cur3 = st.columns(3)
 def card_html(label, color, pct, val):
@@ -169,9 +163,10 @@ with t_col3:
 
 st.divider()
 
-# 圖表與庫存
+# 圖表區
 c_pie, c_table = st.columns([1, 1.5])
 with c_pie:
+    st.subheader("🍩 資產配置佔比")
     fig = go.Figure(data=[go.Pie(labels=['股票', '槓桿', '債券', '現金'], values=[s_val, l_val, b_val, c_val], marker=dict(colors=['#00d4ff', '#bd93f9', '#ff9f1c', '#00ff88']), hole=.4)])
     fig.update_layout(template="plotly_dark", margin=dict(t=0,b=0,l=0,r=0))
     st.plotly_chart(fig, use_container_width=True)
@@ -181,28 +176,33 @@ with c_table:
     if processed_rows:
         st.dataframe(pd.DataFrame(processed_rows), use_container_width=True, hide_index=True)
 
+# 偵錯日誌區
+with st.expander("🛠️ 報價系統偵錯日誌"):
+    for log in debug_logs:
+        st.text(log)
+
 # 側邊欄
 with st.sidebar:
-    st.header("⚙️ 雲端數據控制")
-    if st.button("🔄 強制重新整理"):
-        st.cache_data.clear() # 清除報價快取
+    st.header("⚙️ 雲端中心")
+    if st.button("🚀 強制刷新 (清除快取)"):
+        st.cache_data.clear()
         st.session_state.stocks = load_data_from_gs()
         st.rerun()
     
     st.divider()
     add_id = st.text_input("新增代號 (如 00662 / 2330)").upper().strip()
-    if st.button("➕ 新增入池並存檔"):
+    if st.button("➕ 新增入池"):
         if add_id and add_id not in st.session_state.stocks:
             st.session_state.stocks[add_id] = {"sh": 0.0, "co": 0.0}
             save_data_to_gs(st.session_state.stocks)
             st.rerun()
 
     st.divider()
-    st.write("📊 **庫存股數修改**")
+    st.write("📊 **數據調整**")
     if list(st.session_state.stocks.keys()):
         target_stk = st.selectbox("選取標的", options=list(st.session_state.stocks.keys()))
-        new_sh = st.number_input("持有總股數", value=float(st.session_state.stocks[target_stk]["sh"]))
-        if st.button("💾 儲存並同步至雲端"):
+        new_sh = st.number_input("修改股數", value=float(st.session_state.stocks[target_stk]["sh"]))
+        if st.button("💾 儲存修改"):
             st.session_state.stocks[target_stk]["sh"] = new_sh
             save_data_to_gs(st.session_state.stocks)
             st.rerun()
