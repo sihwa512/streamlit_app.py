@@ -2,180 +2,131 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
 
 # --- 頁面設定 ---
-st.set_page_config(page_title="綜合退休戰情室 V70.2 Cloud", layout="wide")
+st.set_page_config(page_title="綜合退休戰情室 V70.3", layout="wide")
 
-# --- 自定義 CSS 讓風格接近原本的黑金風格 ---
-st.markdown("""
-    <style>
-    .main { background-color: #0f111a; color: #e0e0e0; }
-    div[data-testid="stMetricValue"] > div { font-family: 'Consolas'; font-weight: bold; }
-    </style>
-    """, unsafe_allow_html=True)
-
-# --- 核心邏輯函數 ---
-def get_stock_data(symbol):
-    if symbol == "CASH":
-        return {"price": 1.0, "name": "閒置現金", "prevClose": 1.0}
+# --- 核心邏輯：抓取報價 ---
+@st.cache_data(ttl=3600)
+def get_price(symbol):
+    if symbol == "CASH": return 1.0, "現金部位"
     try:
-        # 自動處理上市櫃後綴
-        ticker_sym = symbol if "." in symbol else f"{symbol}.TW"
-        ticker = yf.Ticker(ticker_sym)
-        info = ticker.fast_info
-        return {
-            "price": info.last_price,
-            "name": ticker.info.get('longName', symbol),
-            "prevClose": info.previous_close
-        }
-    except:
-        return None
+        s = symbol if "." in symbol else f"{symbol}.TW"
+        t = yf.Ticker(s)
+        return t.fast_info.last_price, t.info.get('shortName', symbol)
+    except: return 0.0, symbol
 
-# --- 初始化 Session State (取代 LocalStorage) ---
+# --- 初始化資料 ---
 if 'stocks' not in st.session_state:
-    st.session_state.stocks = {} # {id: {sh: 0, co: 0}}
+    st.session_state.stocks = {"CASH": {"sh": 0.0, "co": 1.0}}
 if 'principal' not in st.session_state:
     st.session_state.principal = 0.0
 
-# --- 側邊欄：資產管理 ---
-with st.sidebar:
-    st.header("⚙️ 股票池管理")
-    new_id = st.text_input("輸入代號 (上市櫃請加 .TW / .TWO)").upper()
-    if st.button("新增標的"):
-        if new_id and new_id not in st.session_state.stocks:
-            st.session_state.stocks[new_id] = {'sh': 0.0, 'co': 0.0}
-            st.rerun()
-
-    st.divider()
-    if st.button("🗑️ 系統重置", type="primary"):
-        st.session_state.stocks = {}
-        st.session_state.principal = 0.0
-        st.rerun()
-
-# --- 主畫面標題 ---
-st.title("📊 綜合退休戰情室 V70.2 Cloud")
-
-# --- 頂部指標區 ---
-col1, col2, col3, col4 = st.columns(4)
-
-# 計算各類市值
+# --- 計算數據 ---
 total_mkt = 0.0
-invested_mkt = 0.0
-invested_cost = 0.0
-cat_data = {"股票": 0.0, "槓桿": 0.0, "類現金": 0.0} # 類現金含債券(B)與現金(CASH)
+s_val, l_val, b_val, c_val = 0.0, 0.0, 0.0, 0.0
+rows = []
 
-processed_data = []
-for sid, val in st.session_state.stocks.items():
-    data = get_stock_data(sid)
-    if data:
-        mkt = val['sh'] * data['price']
-        total_mkt += mkt
-        if sid != "CASH":
-            invested_mkt += mkt
-            invested_cost += (val['sh'] * val['co'])
-        
-        # 大局觀分類
-        if sid == "CASH" or "B" in sid: cat_data["類現金"] += mkt
-        elif "L" in sid: cat_data["槓桿"] += mkt
-        else: cat_data["股票"] += mkt
-        
-        processed_data.append({
-            "標的": sid, "名稱": data['name'], "股數": val['sh'], 
-            "成本": val['co'], "現價": round(data['price'], 2), "市值": mkt
-        })
+for sid, v in st.session_state.stocks.items():
+    price, name = get_price(sid)
+    mkt = v['sh'] * price
+    total_mkt += mkt
+    if sid == "CASH": c_val += mkt
+    elif "B" in sid: b_val += mkt
+    elif "L" in sid: l_val += mkt
+    else: s_val += mkt
+    rows.append({"標的": sid, "名稱": name, "市值": mkt})
 
-# 顯示指標
+safe_val = b_val + c_val # 類現金
+
+# --- 主介面 ---
+st.title("📊 綜合退休戰情室 V70.3 Cloud")
+
+# 指標列
+col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("資產總市值", f"${total_mkt:,.0f}")
 with col2:
+    p_input = st.number_input("投入總本金", value=float(st.session_state.principal), step=10000.0)
+    st.session_state.principal = p_input
+with col3:
     true_pnl = total_mkt - st.session_state.principal
     pnl_pct = (true_pnl / st.session_state.principal * 100) if st.session_state.principal > 0 else 0
     st.metric("真實累積總損益", f"${true_pnl:,.0f}", f"{pnl_pct:.2f}%")
-with col3:
-    st.session_state.principal = st.number_input("投入總本金", value=st.session_state.principal, step=10000.0)
-with col4:
-    # 簡單模擬 USD/TWD
-    st.metric("USD/TWD", "32.145", "-0.012")
 
-# --- 圓餅圖與大局觀 ---
-c_left, c_right = st.columns([1, 2])
-with c_left:
-    fig = go.Figure(data=[go.Pie(labels=list(cat_data.keys()), values=list(cat_data.values()), hole=.3)])
-    fig.update_layout(template="plotly_dark", margin=dict(t=0, b=0, l=0, r=0))
-    st.plotly_chart(fig, use_container_width=True)
-
-with c_right:
-    st.subheader("⚖️ 現況大分類佔比")
-    cc1, cc2, cc3 = st.columns(3)
-    for i, cat in enumerate(cat_data.keys()):
-        pct = (cat_data[cat] / total_mkt * 100) if total_mkt > 0 else 0
-        with [cc1, cc2, cc3][i]:
-            st.metric(f"現況 {cat}", f"{pct:.1f}%", f"${cat_data[cat]:,.0f}")
-
-# --- 資產表格 ---
-st.subheader("📋 當前資產部位")
-df = pd.DataFrame(processed_data)
-if not df.empty:
-    st.dataframe(df, use_container_width=True, hide_index=True)
-else:
-    st.info("目前庫存空空如也，請從側邊欄新增標的。")
-
-# --- 交易功能紀錄 (連動現金與本金) ---
 st.divider()
-st.subheader("🛒 快速交易記帳")
-t_col1, t_col2, t_col3, t_col4 = st.columns(4)
+
+# --- 目標再平衡區塊 (您要求的排版) ---
+st.subheader("⚖️ 目標再平衡設定")
+curr_beta = (s_val/total_mkt * 1.0 + l_val/total_mkt * 2.0) if total_mkt > 0 else 0
+st.write(f"當前組合 Beta: **{curr_beta:.2f}**")
+
+# 現況顯示列 (金額大小顏色同步)
+st.write("🔍 **目前現況：**")
+cur1, cur2, cur3 = st.columns(3)
+with cur1:
+    st.markdown(f"<p style='color:#00d4ff; font-size:14px; margin-bottom:0;'>現況 股票</p>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#00d4ff; font-size:24px;'>{(s_val/total_mkt*100 if total_mkt>0 else 0):.1f}%</b>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#00d4ff; font-size:20px;'>${s_val:,.0f}</b>", unsafe_allow_html=True)
+with cur2:
+    st.markdown(f"<p style='color:#bd93f9; font-size:14px; margin-bottom:0;'>現況 槓桿</p>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#bd93f9; font-size:24px;'>{(l_val/total_mkt*100 if total_mkt>0 else 0):.1f}%</b>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#bd93f9; font-size:20px;'>${l_val:,.0f}</b>", unsafe_allow_html=True)
+with cur3:
+    st.markdown(f"<p style='color:#00ff88; font-size:14px; margin-bottom:0;'>現況 類現金</p>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#00ff88; font-size:24px;'>{(safe_val/total_mkt*100 if total_mkt>0 else 0):.1f}%</b>", unsafe_allow_html=True)
+    st.markdown(f"<b style='color:#00ff88; font-size:20px;'>${safe_val:,.0f}</b>", unsafe_allow_html=True)
+
+st.write("") # 間隔
+
+# 目標輸入列
+t_col1, t_col2, t_col3 = st.columns(3)
 with t_col1:
-    t_sid = st.selectbox("選擇標的", options=list(st.session_state.stocks.keys()))
+    ts = st.number_input("目標 股票 %", value=40)
 with t_col2:
-    t_type = st.radio("類型", ["買進/存入", "賣出/提領"], horizontal=True)
+    tl = st.number_input("目標 槓桿 %", value=30)
 with t_col3:
-    t_sh = st.number_input("成交股數/金額", min_value=0.0)
-with t_col4:
-    t_px = st.number_input("成交單價", min_value=0.0, value=1.0 if t_sid == "CASH" else 0.0)
+    t_safe_pct = 100 - ts - tl
+    st.write(f"目標 類現金 %")
+    st.markdown(f"<b style='font-size:24px; color:#00ff88;'>{t_safe_pct}%</b>", unsafe_allow_html=True)
 
-if st.button("確認送出交易"):
-    # 這裡實作 V70.1 的邏輯：買賣扣 CASH，CASH 出入金改 Principal
-    if t_sid == "CASH":
-        if t_type == "買進/存入":
-            st.session_state.stocks["CASH"]['sh'] += t_sh
-            st.session_state.principal += t_sh
-        else:
-            st.session_state.stocks["CASH"]['sh'] -= t_sh
-            st.session_state.principal -= t_sh
-    else:
-        # 股票買賣邏輯... (此處簡化，完整邏輯同 HTML 版本)
-        trade_val = t_sh * t_px
-        if t_type == "買進/存入":
-            # 算平均成本
-            old_sh = st.session_state.stocks[t_sid]['sh']
-            old_co = st.session_state.stocks[t_sid]['co']
-            new_sh = old_sh + t_sh
-            st.session_state.stocks[t_sid]['co'] = ((old_sh * old_co) + trade_val) / new_sh
-            st.session_state.stocks[t_sid]['sh'] = new_sh
-            # 扣現金
-            if "CASH" in st.session_state.stocks: st.session_state.stocks["CASH"]['sh'] -= trade_val
-        else:
-            st.session_state.stocks[t_sid]['sh'] -= t_sh
-            # 加現金
-            if "CASH" in st.session_state.stocks: st.session_state.stocks["CASH"]['sh'] += trade_val
-    st.success("交易已記錄！")
-    st.rerun()
+# 目標金額顯示
+st.write("🎯 **目標金額預估：**")
+tar1, tar2, tar3 = st.columns(3)
+tar1.markdown(f"<b style='color:#00d4ff; font-size:20px;'>${total_mkt * ts/100:,.0f}</b>", unsafe_allow_html=True)
+tar2.markdown(f"<b style='color:#bd93f9; font-size:20px;'>${total_mkt * tl/100:,.0f}</b>", unsafe_allow_html=True)
+tar3.markdown(f"<b style='color:#00ff88; font-size:20px;'>${total_mkt * t_safe_pct/100:,.0f}</b>", unsafe_allow_html=True)
 
-# --- 風控指標 ---
+target_beta = (ts/100 * 1.0 + tl/100 * 2.0)
+st.info(f"🚀 目標組合 Beta: **{target_beta:.2f}**")
+
 st.divider()
-f_col1, f_col2 = st.columns(2)
-with f_col1:
-    st.subheader("📈 FIRE 防禦指標")
-    expenses = st.number_input("預估年開銷", value=500000)
-    safe_val = cat_data["類現金"]
-    safe_mult = safe_val / expenses if expenses > 0 else 0
-    st.metric("類現金防禦倍數 (目標 15x)", f"{safe_mult:.1f} 倍", delta=f"{safe_mult-15:.1f}", delta_color="normal")
 
-with f_col2:
-    st.subheader("🏦 質借風控")
-    loan = st.number_input("目前已借款總額", value=0)
-    pledge_needed = loan * 5
-    st.write(f"需準備股票市值 (5倍法則): **${pledge_needed:,.0f}**")
-    limit_pct = (loan / total_mkt * 100) if total_mkt > 0 else 0
-    st.metric("借款佔總資產 (上限 20%)", f"{limit_pct:.1f}%", delta=f"{20-limit_pct:.1f}%", delta_color="normal")
+# --- 圓餅圖 (不合併債券現金) ---
+st.subheader("🍩 資產配置佔比 (全分類)")
+fig = go.Figure(data=[go.Pie(
+    labels=['股票', '槓桿', '債券', '現金'], 
+    values=[s_val, l_val, b_val, c_val],
+    marker=dict(colors=['#00d4ff', '#bd93f9', '#ff9f1c', '#00ff88']),
+    hole=.4
+)])
+fig.update_layout(template="plotly_dark")
+st.plotly_chart(fig)
+
+# --- 管理功能 (側邊欄) ---
+with st.sidebar:
+    st.header("⚙️ 股票池管理")
+    add_id = st.text_input("新增代號 (例如 2330)")
+    if st.button("新增標的"):
+        if add_id: 
+            st.session_state.stocks[add_id.upper()] = {"sh": 0.0, "co": 0.0}
+            st.rerun()
+    
+    st.divider()
+    if st.button("🗑️ 系統重置", type="primary"):
+        st.session_state.stocks = {"CASH": {"sh": 0.0, "co": 1.0}}
+        st.session_state.principal = 0.0
+        st.rerun()
+
+    st.divider()
+    st.write("💡 溫馨提醒：雲端版目前為測試狀態，頁面重新整理資料會歸零，請小心操作。")
