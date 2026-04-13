@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import re
 
 # --- 1. 連線設定 ---
-st.set_page_config(page_title="專業退休戰情室 V77.1", layout="wide")
+st.set_page_config(page_title="專業退休戰情室 V77.2", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 
 def get_client():
@@ -26,7 +26,7 @@ def get_client():
         }, scopes=scope))
     except: return None
 
-# --- 2. 數據引擎：修復 00662 去零問題 ---
+# --- 2. 數據引擎：修正代號補零邏輯 ---
 @st.cache_data(ttl=60)
 def fetch_cloud_data():
     client = get_client()
@@ -39,9 +39,13 @@ def fetch_cloud_data():
             df_t['sh'] = pd.to_numeric(df_t['sh'], errors='coerce').fillna(0)
             df_t['pr'] = pd.to_numeric(df_t['pr'], errors='coerce').fillna(0)
             for _, r in df_t.iterrows():
-                # 🌟 強制補零：如果是純數字且長度不足 5 位，補齊到 5 位 (例如 662 -> 00662)
                 raw_id = str(r['id']).upper().strip()
-                sid = raw_id.zfill(5) if raw_id.isdigit() and len(raw_id) < 5 else raw_id
+                # 🌟 智能補零邏輯修正：
+                # 只有 3 位數(如 662) 補到 5 位(00662)；4 位數(如 2330) 則不變
+                if raw_id.isdigit() and len(raw_id) <= 3:
+                    sid = raw_id.zfill(5)
+                else:
+                    sid = raw_id
                 
                 if r['type'] == "入金": total_in += r['sh']
                 elif r['type'] == "出金": total_in -= r['sh']
@@ -60,6 +64,7 @@ def fetch_cloud_data():
 @st.cache_data(ttl=300)
 def get_price_metrics(sid):
     if sid == "CASH": return 1.0, 1.0, 1.0
+    # 嘗試台灣市場常用的後綴
     for tsid in [f"{sid}.TW", f"{sid}.TWO", sid]:
         try:
             t = yf.Ticker(tsid)
@@ -89,7 +94,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 4. 數據整合 ---
+# --- 4. 數據計算 ---
 df_hist, cur_stocks, total_capital = fetch_cloud_data()
 fx = yf.Ticker("TWD=X").fast_info.last_price or 32.2
 
@@ -98,7 +103,6 @@ stock_val, leverage_val, cash_val = 0.0, 0.0, 0.0
 portfolio_beta_sum = 0.0
 stock_list = []
 
-# 第一遍遍歷：計算總市值與分類市值
 active_stocks = {}
 for sid, v in cur_stocks.items():
     if v['sh'] <= 0: continue
@@ -109,18 +113,15 @@ for sid, v in cur_stocks.items():
     
     beta = 1.0
     if "L" in sid or "631" in sid: 
-        leverage_val += m
-        beta = 2.0
+        leverage_val += m; beta = 2.0
     elif sid == "CASH" or "865B" in sid:
-        cash_val += m
-        beta = 0.0
+        cash_val += m; beta = 0.0
     else:
         stock_val += m
     
     portfolio_beta_sum += (beta * m)
-    active_stocks[sid] = {"sh": v['sh'], "curr": curr, "m": m, "beta": beta, "avg": v['avg']}
+    active_stocks[sid] = {"sh": v['sh'], "curr": curr, "m": m, "avg": v['avg']}
 
-# 第二遍遍歷：生成顯示列表（包含佔比）
 for sid, data in active_stocks.items():
     pct = (data['m'] / total_mkt * 100) if total_mkt > 0 else 0
     stock_list.append({
@@ -130,8 +131,8 @@ for sid, data in active_stocks.items():
 
 curr_beta = (portfolio_beta_sum / total_mkt) if total_mkt > 0 else 0.0
 
-# --- 5. 主畫面 ---
-st.title("🛡️ 專業退休戰情室 V77.1")
+# --- 5. 主畫面：儀表板 ---
+st.title("🛡️ 專業退休戰情室 V77.2")
 h1, h2, h3, h4 = st.columns(4)
 with h1: st.markdown(f"<div class='metric-box'><small>💵 USD/TWD</small><br><span class='val-text' style='color:#58a6ff'>{fx:.3f}</span></div>", unsafe_allow_html=True)
 with h2: st.markdown(f"<div class='metric-box'><small>💰 總市值</small><br><span class='val-text' style='color:#00d4ff'>${int(total_mkt):,}</span></div>", unsafe_allow_html=True)
@@ -149,18 +150,9 @@ st.markdown(f"""
         <span class='beta-tag'>組合 Beta: {curr_beta:.2f}</span>
     </div>
     <div style='display:flex; justify-content:space-around;'>
-        <div style='text-align:center'>
-            <div style='color:#8b949e'>股票</div>
-            <div class='cat-pct stock-blue'>{(stock_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div>
-        </div>
-        <div style='text-align:center'>
-            <div style='color:#8b949e'>槓桿</div>
-            <div class='cat-pct leverage-purple'>{(leverage_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div>
-        </div>
-        <div style='text-align:center'>
-            <div style='color:#8b949e'>類現金</div>
-            <div class='cat-pct cash-green'>{(cash_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div>
-        </div>
+        <div style='text-align:center'><div style='color:#8b949e'>股票</div><div class='cat-pct stock-blue'>{(stock_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div></div>
+        <div style='text-align:center'><div style='color:#8b949e'>槓桿</div><div class='cat-pct leverage-purple'>{(leverage_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div></div>
+        <div style='text-align:center'><div style='color:#8b949e'>類現金</div><div class='cat-pct cash-green'>{(cash_val/total_mkt*100) if total_mkt>0 else 0:.1f}%</div></div>
     </div>
 </div>
 """, unsafe_allow_html=True)
@@ -172,13 +164,13 @@ with t_col3: t_cash = 100 - t_stock - t_lever; st.info(f"類現金目標: {t_cas
 
 st.divider()
 
-# --- 7. 資產明細表 (含佔比欄) ---
+# --- 7. 資產明細表 (欄位已重排) ---
 st.subheader("📋 目前資產部位與買賣建議")
 if stock_list:
-    html = "<table><thead><tr><th>標的</th><th>持股數</th><th>佔比</th><th>報價</th><th>市值</th><th>報酬</th><th>再平衡建議</th></tr></thead><tbody>"
+    # 🌟 欄位重排：標的 | 持股數 | 報價 | 市值 | 報酬 | 佔比 | 再平衡建議
+    html = "<table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>市值</th><th>報酬</th><th>佔比</th><th>再平衡建議</th></tr></thead><tbody>"
     for s in stock_list:
         advice = "-"
-        # 簡易建議邏輯
         if s['標的'] == "00662":
             diff = (total_mkt * t_stock / 100) - stock_val
             shares = int(diff / s['報價'])
@@ -188,19 +180,19 @@ if stock_list:
             shares = int(diff / s['報價'])
             if abs(shares) > 0: advice = f"<span class='{'action-buy' if shares>0 else 'action-sell'}'>{'加碼' if shares>0 else '減碼'} {abs(shares):,} 股</span>"
 
-        html += f"<tr><td><b>{s['標的']}</b></td><td>{s['持股']:,}</td><td>{s['佔比']:.1f}%</td><td>{s['報價']:.2f}</td><td>${int(s['市值']):,}</td><td>{s['報酬']}</td><td>{advice}</td></tr>"
+        html += f"<tr><td><b>{s['標的']}</b></td><td>{s['持股']:,}</td><td>{s['報價']:.2f}</td><td>${int(s['市值']):,}</td><td>{s['報酬']}</td><td>{s['佔比']:.1f}%</td><td>{advice}</td></tr>"
     html += "</tbody></table>"
     st.write(html, unsafe_allow_html=True)
 
-# --- 8. 側邊欄：出入金操作指南 ---
 with st.sidebar:
     st.header("🖊️ 快速交易 / 出入金")
-    st.info("💡 **如何出入金？**\n\n1. 在「動作」選擇 **入金** 或 **出金**。\n2. 「代號」固定填寫 **CASH**。\n3. 「數量」填寫您的金額。\n4. 「單價」維持 **1.0**。")
-    
     op = st.selectbox("動作類型", ["買入", "賣出", "入金", "出金"])
-    sid_in = st.text_input("代號 (股票或 CASH)", value="CASH").upper().strip()
-    sh_in = st.number_input("數量 (股數或金額)", min_value=0.0, step=100.0)
-    pr_in = st.number_input("成交單價", min_value=0.0, value=1.0)
+    # 🌟 輸入框也加入智能邏輯
+    raw_sid = st.text_input("代號", value="CASH").upper().strip()
+    sid_in = raw_sid.zfill(5) if raw_sid.isdigit() and len(raw_sid) <= 3 else raw_sid
+    
+    sh_in = st.number_input("數量 / 金額", min_value=0.0, step=100.0)
+    pr_in = st.number_input("單價", min_value=0.0, value=1.0)
     
     if st.button("💾 同步至雲端"):
         client = get_client()
