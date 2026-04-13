@@ -180,3 +180,31 @@ if stock_list:
         advice = "-"
         # 簡易建議邏輯
         if s['標的'] == "00662":
+            diff = (total_mkt * t_stock / 100) - stock_val
+            shares = int(diff / s['報價'])
+            if abs(shares) > 0: advice = f"<span class='{'action-buy' if shares>0 else 'action-sell'}'>{'加碼' if shares>0 else '減碼'} {abs(shares):,} 股</span>"
+        elif "L" in s['標的']:
+            diff = (total_mkt * t_lever / 100) - leverage_val
+            shares = int(diff / s['報價'])
+            if abs(shares) > 0: advice = f"<span class='{'action-buy' if shares>0 else 'action-sell'}'>{'加碼' if shares>0 else '減碼'} {abs(shares):,} 股</span>"
+
+        html += f"<tr><td><b>{s['標的']}</b></td><td>{s['持股']:,}</td><td>{s['佔比']:.1f}%</td><td>{s['報價']:.2f}</td><td>${int(s['市值']):,}</td><td>{s['報酬']}</td><td>{advice}</td></tr>"
+    html += "</tbody></table>"
+    st.write(html, unsafe_allow_html=True)
+
+# --- 8. 側邊欄：出入金操作指南 ---
+with st.sidebar:
+    st.header("🖊️ 快速交易 / 出入金")
+    st.info("💡 **如何出入金？**\n\n1. 在「動作」選擇 **入金** 或 **出金**。\n2. 「代號」固定填寫 **CASH**。\n3. 「數量」填寫您的金額。\n4. 「單價」維持 **1.0**。")
+    
+    op = st.selectbox("動作類型", ["買入", "賣出", "入金", "出金"])
+    sid_in = st.text_input("代號 (股票或 CASH)", value="CASH").upper().strip()
+    sh_in = st.number_input("數量 (股數或金額)", min_value=0.0, step=100.0)
+    pr_in = st.number_input("成交單價", min_value=0.0, value=1.0)
+    
+    if st.button("💾 同步至雲端"):
+        client = get_client()
+        ws = client.open_by_key(GS_ID).worksheet("Transactions")
+        ws.append_row([datetime.now().strftime("%Y-%m-%d"), op, sid_in, sh_in, pr_in, ""])
+        st.cache_data.clear()
+        st.rerun()
