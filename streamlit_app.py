@@ -186,4 +186,39 @@ st.markdown(f"""
 <div class="responsive-grid">
     <div class="info-box b-blue" style="background:#1c2128; opacity:0.8;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div class="box-amt">${int(ts_amt):,}</div></div>
     <div class="info-box b-purple" style="background:#1c2128; opacity:0.8;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div class="box-amt">${int(tl_amt):,}</div></div>
-    <div class="info-box b-green" style="background:#1c2128; opacity:0.8;"><div
+    <div class="info-box b-green" style="background:#1c2128; opacity:0.8;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div class="box-amt">${int(tc_amt):,}</div></div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- 7. 資產明細表 ---
+st.write("📋 **資產部位明細**")
+if active_data:
+    html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>市值</th><th>報酬</th><th>佔比</th><th>操作建議</th></tr></thead><tbody>"
+    for sid, d in active_data.items():
+        if sid == "CASH" and d['sh'] == 0: continue
+        pct = (d['m']/total_mkt*100) if total_mkt!=0 else 0
+        roi = f"{((d['curr']-d['avg'])/d['avg']*100):.1f}%" if d['avg']>0 else "0%"
+        advice = "-"
+        if sid == "00662":
+            sh = int((ts_amt - s_v) / d['curr'])
+            if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
+        elif "L" in sid or "631" in sid:
+            sh = int((tl_amt - l_v) / d['curr'])
+            if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
+        elif sid == "CASH": advice = f"調整 ${int(tc_amt - c_v):,}"
+        html += f"<tr><td><b>{sid}</b></td><td>{int(d['sh']):,}</td><td>{d['curr']:.2f}</td><td>{d['beta']:.1f}</td><td>${int(d['m']):,}</td><td>{roi}</td><td>{pct:.1f}%</td><td>{advice}</td></tr>"
+    html += "</tbody></table></div>"
+    st.write(html, unsafe_allow_html=True)
+
+with st.sidebar:
+    st.header("🖊️ 交易錄入")
+    op = st.selectbox("類型", ["買入", "賣出", "入金", "出金"])
+    raw_sid = st.text_input("代號", value="00662").upper().strip()
+    sid_in = raw_sid.zfill(5) if raw_sid.isdigit() and len(raw_sid) <= 3 else raw_sid
+    sh_in = st.number_input("數量/金額", min_value=0.0, step=100.0)
+    pr_in = st.number_input("單價", min_value=0.0, value=1.0)
+    if st.button("💾 確認存檔"):
+        client = get_client()
+        ws = client.open_by_key(GS_ID).worksheet("Transactions")
+        ws.append_row([datetime.now().strftime("%Y-%m-%d"), op, sid_in, sh_in, pr_in, ""])
+        st.cache_data.clear(); st.rerun()
