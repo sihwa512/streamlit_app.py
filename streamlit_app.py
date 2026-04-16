@@ -9,7 +9,7 @@ import re
 import pytz
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V83.0", layout="wide")
+st.set_page_config(page_title="退休戰情室 V83.1", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -72,13 +72,16 @@ def get_price_metrics(sid):
     for tsid in [f"{sid}.TW", f"{sid}.TWO", sid]:
         try:
             t = yf.Ticker(tsid)
-            hist = t.history(period="5d")
+            # 🌟 防呆重點 1：剔除包含 NaN 的無效報價行
+            hist = t.history(period="5d").dropna(subset=['Close'])
             if not hist.empty:
                 curr = hist['Close'].iloc[-1]
                 prev = hist['Close'].iloc[-2] if len(hist) > 1 else curr
-                ytd_hist = t.history(start=f"{datetime.now().year}-01-01")
+                ytd_hist = t.history(start=f"{datetime.now().year}-01-01").dropna(subset=['Close'])
                 ytd_open = ytd_hist['Close'].iloc[0] if not ytd_hist.empty else curr
-                return float(curr), float(prev), float(ytd_open)
+                
+                # 🌟 防呆重點 2：確保最終回傳的是乾淨的 float
+                return float(curr) if pd.notna(curr) else 0.0, float(prev) if pd.notna(prev) else 0.0, float(ytd_open) if pd.notna(ytd_open) else 0.0
         except: continue
     return 0.0, 0.0, 0.0
 
@@ -87,17 +90,14 @@ st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
     
-    /* 強制一列顯示 4 個指標，縮減間距 */
     .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
     @media (max-width: 1000px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
     
-    /* 縮減卡片高度與內距 */
     .metric-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 10px; text-align: center; }
     .label-bright { color: #8b949e; font-size: 0.95rem; font-weight: bold; margin-bottom: 4px; }
     .val-main { font-size: 1.7rem; font-weight: bold; color: #ffffff; font-family: 'Consolas', monospace; margin-bottom: 2px; line-height: 1.1; }
     .val-sub { font-size: 0.85rem; color: #8b949e; }
     
-    /* 緊湊配置方塊 */
     .responsive-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
     .info-box { background: #161b22; border-radius: 8px; padding: 12px 10px; text-align: center; border: 1px solid #30363d; }
     .box-pct { font-size: 1.6rem; font-weight: bold; color: #ffffff; margin: 4px 0; line-height: 1.1; }
@@ -106,10 +106,8 @@ st.markdown("""
     .b-purple { border-top: 4px solid #bc8cff; }
     .b-green { border-top: 4px solid #3fb950; }
     
-    /* Beta 標籤緊湊化 */
     .beta-tag { background: #21262d; color: #ff9f1c; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-family: 'Consolas'; border: 1px solid #ff9f1c; }
     
-    /* 表格行高極致壓縮 */
     table { width: 100%; border-collapse: collapse; font-size: 1.05rem !important; }
     th { background: #21262d !important; color: #8b949e !important; padding: 8px 10px !important; text-align: left !important; }
     td { padding: 8px 10px !important; border-bottom: 1px solid #30363d !important; color: #c9d1d9 !important;}
@@ -145,12 +143,15 @@ curr_beta = (beta_sum / total_mkt) if total_mkt > 0 else 0.0
 now_tw = datetime.now(TW_TIMEZONE)
 today_str = now_tw.strftime("%Y-%m-%d")
 
+# 🌟 防呆重點 3：寫入快照時保護 NaN
+safe_total_mkt = int(total_mkt) if pd.notna(total_mkt) else 0
+
 if not df_snap.empty:
     recorded_dates = df_snap['date'].astype(str).tolist()
-    if today_str not in recorded_dates:
+    if today_str not in recorded_dates and safe_total_mkt > 0:
         client = get_client()
         ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
-        ws_snap.append_row([today_str, int(total_mkt)])
+        ws_snap.append_row([today_str, safe_total_mkt])
         st.cache_data.clear()
         st.rerun()
 
@@ -162,39 +163,38 @@ if not df_snap.empty:
 snap_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
 # --- 6. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V83.0")
+st.markdown(f"#### 🛡️ 退休戰情室 V83.1")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
-    <div class="metric-card"><div class="label-bright">💰 總市值</div><div class="val-main" style="color:#00d4ff">${int(total_mkt):,}</div><div class="val-sub">昨日紀錄: ${int(yesterday_mkt):,}</div></div>
-    <div class="metric-card"><div class="label-bright">📈 今日損益 (自動快照)</div><div class="val-main {'up' if snap_delta>=0 else 'down'}">${int(snap_delta):,}</div><div class="val-sub">基於跨日快照對比</div></div>
-    <div class="metric-card"><div class="label-bright">📊 累積盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${int(total_mkt-total_capital):,}</div><div class="val-sub">本金: ${int(total_capital):,}</div></div>
+    <div class="metric-card"><div class="label-bright">💰 總市值</div><div class="val-main" style="color:#00d4ff">${int(total_mkt) if pd.notna(total_mkt) else 0:,}</div><div class="val-sub">昨日紀錄: ${int(yesterday_mkt):,}</div></div>
+    <div class="metric-card"><div class="label-bright">📈 今日損益 (自動快照)</div><div class="val-main {'up' if snap_delta>=0 else 'down'}">${int(snap_delta) if pd.notna(snap_delta) else 0:,}</div><div class="val-sub">基於跨日快照對比</div></div>
+    <div class="metric-card"><div class="label-bright">📊 累積盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${int(total_mkt-total_capital) if pd.notna(total_mkt) else 0:,}</div><div class="val-sub">本金: ${int(total_capital):,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 🏆 總市值闖關進度圖 (極度壓縮高度) ---
+# --- 7. 🏆 總市值闖關進度圖 ---
 with st.sidebar:
     st.header("🎯 闖關目標設定")
     goal_amt = st.number_input("設定財務自由目標 (NTD)", value=30000000, step=1000000)
 
 st.write("🏆 **財務自由闖關進度**")
 m1, m2, m3, m4 = goal_amt * 0.25, goal_amt * 0.50, goal_amt * 0.75, goal_amt
-max_x = max(goal_amt * 1.05, total_mkt * 1.05)
+safe_display_mkt = safe_total_mkt if safe_total_mkt > 0 else 0
+max_x = max(goal_amt * 1.05, safe_display_mkt * 1.05)
 
 fig_prog = go.Figure()
 fig_prog.add_trace(go.Bar(x=[max_x], y=["進度"], orientation='h', marker=dict(color='#21262d'), hoverinfo='skip'))
-fig_prog.add_trace(go.Bar(x=[total_mkt], y=["進度"], orientation='h', marker=dict(color='#00d4ff'), text=[f"目前: ${int(total_mkt):,}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
+fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=["進度"], orientation='h', marker=dict(color='#00d4ff'), text=[f"目前: ${safe_display_mkt:,}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
 for val, name in milestones:
-    color = "#3fb950" if total_mkt >= val else "#ff9f1c" 
+    color = "#3fb950" if safe_display_mkt >= val else "#ff9f1c" 
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
     fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=11), xanchor="center", yanchor="bottom", yshift=15)
 
-# 高度壓縮到 90px
 fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=90, margin=dict(l=10, r=10, t=35, b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
-
 
 # --- 8. 配置現況與目標 ---
 s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if total_mkt>0 else (0,0)
@@ -206,9 +206,9 @@ with c2: st.markdown(f"<div style='text-align:right; margin-bottom:5px;'><span c
 
 st.markdown(f"""
 <div class="responsive-grid">
-    <div class="info-box b-blue"><div class="label-bright">現況 股票</div><div class="box-pct">{s_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(s_v):,}</div></div>
-    <div class="info-box b-purple"><div class="label-bright">現況 槓桿</div><div class="box-pct">{l_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(l_v):,}</div></div>
-    <div class="info-box b-green"><div class="label-bright">現況 類現金</div><div class="box-pct">{c_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(c_v):,}</div></div>
+    <div class="info-box b-blue"><div class="label-bright">現況 股票</div><div class="box-pct">{s_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(s_v) if pd.notna(s_v) else 0:,}</div></div>
+    <div class="info-box b-purple"><div class="label-bright">現況 槓桿</div><div class="box-pct">{l_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(l_v) if pd.notna(l_v) else 0:,}</div></div>
+    <div class="info-box b-green"><div class="label-bright">現況 類現金</div><div class="box-pct">{c_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(c_v) if pd.notna(c_v) else 0:,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -224,13 +224,13 @@ ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*t
 
 st.markdown(f"""
 <div class="responsive-grid">
-    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(ts_amt):,}</div></div>
-    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tl_amt):,}</div></div>
-    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tc_amt):,}</div></div>
+    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(ts_amt) if pd.notna(ts_amt) else 0:,}</div></div>
+    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tl_amt) if pd.notna(tl_amt) else 0:,}</div></div>
+    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tc_amt) if pd.notna(tc_amt) else 0:,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 9. 資產明細表 (表格緊湊化) ---
+# --- 9. 資產明細表 ---
 st.write("📋 **資產部位明細**")
 if active_data:
     html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
@@ -242,14 +242,15 @@ if active_data:
         
         advice = "-"
         if sid == "00662":
-            sh = int((ts_amt - s_v) / d['curr'])
+            sh = int((ts_amt - s_v) / d['curr']) if pd.notna(ts_amt) and pd.notna(s_v) and d['curr'] > 0 else 0
             if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
         elif "L" in sid or "631" in sid:
-            sh = int((tl_amt - l_v) / d['curr'])
+            sh = int((tl_amt - l_v) / d['curr']) if pd.notna(tl_amt) and pd.notna(l_v) and d['curr'] > 0 else 0
             if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
-        elif sid == "CASH": advice = f"調整 ${int(tc_amt - c_v):,}"
+        elif sid == "CASH": advice = f"調整 ${int(tc_amt - c_v) if pd.notna(tc_amt) and pd.notna(c_v) else 0:,}"
         
-        html += f"<tr><td><b>{sid}</b></td><td>{int(d['sh']):,}</td><td>{d['curr']:.2f}</td><td>{d['beta']:.1f}</td><td>{d['avg']:.2f}</td><td>${int(d['m']):,}</td><td><span class='{'up' if d['curr']>=d['avg'] else 'down'}'>{roi}</span></td><td><span class='{'up' if d['curr']>=d['ytd'] else 'down'}'>{ytd_roi}</span></td><td>{pct:.1f}%</td><td>{advice}</td></tr>"
+        safe_mkt = int(d['m']) if pd.notna(d['m']) else 0
+        html += f"<tr><td><b>{sid}</b></td><td>{int(d['sh']):,}</td><td>{d['curr']:.2f}</td><td>{d['beta']:.1f}</td><td>{d['avg']:.2f}</td><td>${safe_mkt:,}</td><td><span class='{'up' if d['curr']>=d['avg'] else 'down'}'>{roi}</span></td><td><span class='{'up' if d['curr']>=d['ytd'] else 'down'}'>{ytd_roi}</span></td><td>{pct:.1f}%</td><td>{advice}</td></tr>"
     html += "</tbody></table></div>"
     st.write(html, unsafe_allow_html=True)
 
@@ -259,7 +260,7 @@ with st.sidebar:
         client = get_client()
         ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
         today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
-        ws_snap.append_row([today_str, int(total_mkt)])
+        ws_snap.append_row([today_str, safe_total_mkt])
         st.sidebar.success(f"已更新 {today_str} 快照！")
         st.cache_data.clear(); st.rerun()
     st.divider()
