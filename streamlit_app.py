@@ -214,4 +214,84 @@ for val, name in milestones:
 fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=90, margin=dict(l=10, r=10, t=35, b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
 
-# --- 8. 配置現
+# --- 8. 配置現況與目標 ---
+s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if pd.notna(total_mkt) and total_mkt>0 else (0,0)
+c_p = round(100.0 - s_p - l_p, 1)
+
+c1, c2 = st.columns([1, 1])
+with c1: st.write("⚖️ **配置現況**")
+with c2: st.markdown(f"<div style='text-align:right; margin-bottom:5px;'><span class='beta-tag'>當前 Portfolio Beta: {curr_beta:.2f}</span></div>", unsafe_allow_html=True)
+
+st.markdown(f"""
+<div class="responsive-grid">
+    <div class="info-box b-blue"><div class="label-bright">現況 股票</div><div class="box-pct">{s_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(s_v)}</div></div>
+    <div class="info-box b-purple"><div class="label-bright">現況 槓桿</div><div class="box-pct">{l_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(l_v)}</div></div>
+    <div class="info-box b-green"><div class="label-bright">現況 類現金</div><div class="box-pct">{c_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(c_v)}</div></div>
+</div>
+""", unsafe_allow_html=True)
+
+t_col1, t_col2, t_col3 = st.columns(3)
+with t_col1: ts_pct = st.number_input("股票目標 %", 0, 100, 50, step=5)
+with t_col2: tl_pct = st.number_input("槓桿目標 %", 0, 100, 10, step=5)
+with t_col3: 
+    tc_pct = 100 - ts_pct - tl_pct
+    target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
+    st.markdown(f"<div style='margin-top:25px; text-align:right;'><span class='beta-tag'>預期目標 Beta: {target_beta:.2f}</span></div>", unsafe_allow_html=True)
+
+ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*tc_pct/100
+
+st.markdown(f"""
+<div class="responsive-grid">
+    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(ts_amt)}</div></div>
+    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(tl_amt)}</div></div>
+    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(tc_amt)}</div></div>
+</div>
+""", unsafe_allow_html=True)
+
+# --- 9. 資產明細表 ---
+st.write("📋 **資產部位明細**")
+if active_data:
+    html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
+    for sid, d in active_data.items():
+        if sid == "CASH" and d['sh'] == 0: continue
+        pct = (d['m']/total_mkt*100) if pd.notna(total_mkt) and total_mkt!=0 else 0
+        roi = f"{((d['curr']-d['avg'])/d['avg']*100):.1f}%" if pd.notna(d['avg']) and d['avg']>0 else "0%"
+        ytd_roi = f"{((d['curr']-d['ytd'])/d['ytd']*100):.1f}%" if pd.notna(d['ytd']) and d['ytd']>0 else "0%"
+        
+        advice = "-"
+        if sid == "00662":
+            sh = int((ts_amt - s_v) / d['curr']) if pd.notna(ts_amt) and pd.notna(s_v) and pd.notna(d['curr']) and d['curr']>0 else 0
+            if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
+        elif "L" in sid or "631" in sid:
+            sh = int((tl_amt - l_v) / d['curr']) if pd.notna(tl_amt) and pd.notna(l_v) and pd.notna(d['curr']) and d['curr']>0 else 0
+            if abs(sh) > 0: advice = f"<span class='{'up' if sh>0 else 'down'}'>{'加碼' if sh>0 else '減碼'} {abs(sh):,} 股</span>"
+        elif sid == "CASH": 
+            diff_cash = tc_amt - c_v if pd.notna(tc_amt) and pd.notna(c_v) else 0
+            advice = f"調整 ${fmt_int(diff_cash)}"
+        
+        safe_mkt = int(d['m']) if pd.notna(d['m']) else 0
+        html += f"<tr><td><b>{sid}</b></td><td>{fmt_int(d['sh'])}</td><td>{d['curr']:.2f}</td><td>{d['beta']:.1f}</td><td>{d['avg']:.2f}</td><td>${safe_mkt:,}</td><td><span class='{'up' if d['curr']>=d['avg'] else 'down'}'>{roi}</span></td><td><span class='{'up' if d['curr']>=d['ytd'] else 'down'}'>{ytd_roi}</span></td><td>{pct:.1f}%</td><td>{advice}</td></tr>"
+    html += "</tbody></table></div>"
+    st.write(html, unsafe_allow_html=True)
+
+with st.sidebar:
+    st.header("📸 數據操作")
+    if st.button("強制重置今日快照", use_container_width=True):
+        client = get_client()
+        ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
+        today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
+        ws_snap.append_row([today_str, safe_mkt_int])
+        st.sidebar.success(f"已更新 {today_str} 快照！")
+        st.cache_data.clear(); st.rerun()
+    st.divider()
+    st.header("🖊️ 交易錄入")
+    op = st.selectbox("類型", ["買入", "賣出", "入金", "出金"])
+    raw_sid = st.text_input("代號", value="00662").upper().strip()
+    sid_in = raw_sid.zfill(5) if raw_sid.isdigit() and len(raw_sid) <= 3 else raw_sid
+    sh_in = st.number_input("數量/金額", min_value=0.0, step=100.0)
+    pr_in = st.number_input("單價", min_value=0.0, value=1.0)
+    if st.button("💾 同步至雲端", use_container_width=True):
+        client = get_client()
+        ws = client.open_by_key(GS_ID).worksheet("Transactions")
+        ws.append_row([datetime.now().strftime("%Y-%m-%d"), op, sid_in, sh_in, pr_in, ""])
+        st.cache_data.clear(); st.rerun()
