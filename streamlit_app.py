@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V84.1", layout="wide")
+st.set_page_config(page_title="退休戰情室 V84.2", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -29,7 +29,6 @@ def get_client():
         }, scopes=scope))
     except: return None
 
-# 🌟 防呆格式化函數
 def fmt_int(val):
     if pd.isna(val) or math.isnan(val): return "0"
     try: return f"{int(float(val)):,}"
@@ -79,16 +78,20 @@ def get_price_metrics(sid):
     for tsid in [f"{sid}.TW", f"{sid}.TWO", sid]:
         try:
             t = yf.Ticker(tsid)
+            # 🌟 1. 優先嘗試獲取盤中真實跳動現價
+            try: curr = float(t.fast_info.last_price)
+            except: curr = 0.0
+                
             hist = t.history(period="1mo").dropna(subset=['Close'])
             if not hist.empty:
-                curr = hist['Close'].iloc[-1]
-                prev = hist['Close'].iloc[-2] if len(hist) > 1 else curr
+                # 🌟 2. 若即時價失效，才退回使用歷史最後一筆
+                if pd.isna(curr) or curr == 0.0:
+                    curr = float(hist['Close'].iloc[-1])
+                    
+                prev = float(hist['Close'].iloc[-2]) if len(hist) > 1 else curr
                 ytd_hist = t.history(start=f"{datetime.now().year}-01-01").dropna(subset=['Close'])
-                ytd_open = ytd_hist['Close'].iloc[0] if not ytd_hist.empty else curr
+                ytd_open = float(ytd_hist['Close'].iloc[0]) if not ytd_hist.empty else curr
                 
-                curr = float(curr) if pd.notna(curr) else 0.0
-                prev = float(prev) if pd.notna(prev) else curr
-                ytd_open = float(ytd_open) if pd.notna(ytd_open) else curr
                 if curr > 0: return curr, prev, ytd_open
         except: continue
     return 0.0, 0.0, 0.0
@@ -97,32 +100,22 @@ def get_price_metrics(sid):
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
-    
-    /* 🌟 強制 4 格一列 */
     .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
     @media (max-width: 1000px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
-    
-    /* 卡片高度壓縮 */
     .metric-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 10px; text-align: center; }
     .label-bright { color: #8b949e; font-size: 0.95rem; font-weight: bold; margin-bottom: 4px; }
     .val-main { font-size: 1.8rem; font-weight: bold; color: #ffffff; font-family: 'Consolas', monospace; margin-bottom: 2px; line-height: 1.1; }
     .val-sub { font-size: 0.85rem; color: #8b949e; }
-    
     .responsive-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
     .info-box { background: #161b22; border-radius: 8px; padding: 12px 10px; text-align: center; border: 1px solid #30363d; }
     .box-pct { font-size: 1.7rem; font-weight: bold; color: #ffffff; margin: 6px 0; line-height: 1.1; }
-    
     .b-blue { border-top: 4px solid #58a6ff; }
     .b-purple { border-top: 4px solid #bc8cff; }
     .b-green { border-top: 4px solid #3fb950; }
-    
     .beta-tag { background: #21262d; color: #ff9f1c; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-family: 'Consolas'; border: 1px solid #ff9f1c; }
-    
-    /* 表格壓縮 */
     table { width: 100%; border-collapse: collapse; font-size: 1.1rem !important; }
     th { background: #21262d !important; color: #8b949e !important; padding: 8px 10px !important; text-align: left !important; }
     td { padding: 8px 10px !important; border-bottom: 1px solid #30363d !important; color: #c9d1d9 !important;}
-    
     .up { color: #f85149; font-weight: bold; } 
     .down { color: #3fb950; font-weight: bold; }
 </style>
@@ -162,7 +155,6 @@ curr_beta = (beta_sum / total_mkt) if pd.notna(total_mkt) and total_mkt > 0 else
 # --- 5. 智能自動快照與昨日紀錄 ---
 now_tw = datetime.now(TW_TIMEZONE)
 today_str = now_tw.strftime("%Y-%m-%d")
-
 safe_mkt_int = int(total_mkt) if pd.notna(total_mkt) and not math.isnan(total_mkt) else 0
 
 if not df_snap.empty:
@@ -173,15 +165,15 @@ if not df_snap.empty:
         ws_snap.append_row([today_str, safe_mkt_int])
         st.cache_data.clear()
 
-# 🌟 抓取昨日紀錄
+# 抓取「真正的」昨日紀錄
 yesterday_mkt = 0.0
 if not df_snap.empty:
     valid_snaps = df_snap[df_snap['date'].astype(str) != today_str]
     if not valid_snaps.empty:
         yesterday_mkt = float(valid_snaps.iloc[-1]['total_mkt'])
 
-# --- 6. 儀表板 (四格一列) ---
-st.markdown(f"#### 🛡️ 退休戰情室 V84.1")
+# --- 6. 儀表板 ---
+st.markdown(f"#### 🛡️ 退休戰情室 V84.2")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
@@ -280,9 +272,18 @@ with st.sidebar:
         client = get_client()
         ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
         today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
-        ws_snap.append_row([today_str, safe_mkt_int])
-        st.sidebar.success(f"已更新 {today_str} 快照！")
+        
+        # 🌟 修改點：如果今天已經有紀錄，則「覆蓋」而不是「新增」
+        dates = ws_snap.col_values(1)
+        if today_str in dates:
+            row_idx = dates.index(today_str) + 1 # Google Sheets 從 1 開始
+            ws_snap.update_cell(row_idx, 2, safe_mkt_int)
+        else:
+            ws_snap.append_row([today_str, safe_mkt_int])
+            
+        st.sidebar.success(f"已成功覆蓋 {today_str} 快照為 ${fmt_int(safe_mkt_int)}！")
         st.cache_data.clear(); st.rerun()
+    
     st.divider()
     st.header("🖊️ 交易錄入")
     op = st.selectbox("類型", ["買入", "賣出", "入金", "出金"])
