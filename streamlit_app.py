@@ -8,7 +8,7 @@ import plotly.graph_objects as go
 import re
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V79.1", layout="wide")
+st.set_page_config(page_title="退休戰情室 V80.0", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 
 def get_client():
@@ -80,7 +80,7 @@ def get_price_metrics(sid):
         except: continue
     return 0.0, 0.0, 0.0
 
-# --- 3. 視覺樣式 (超緊湊) ---
+# --- 3. 視覺樣式 ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #e6edf3; }
@@ -138,7 +138,7 @@ if not df_snap.empty:
 snap_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
 # --- 5. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V79.1")
+st.markdown(f"#### 🛡️ 退休戰情室 V80.0")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
@@ -148,11 +148,53 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 6. 配置現況與目標 (Beta 歸位) ---
+# --- 6. 🏆 總市值闖關進度圖 ---
+with st.sidebar:
+    st.header("🎯 終極目標設定")
+    goal_amt = st.number_input("設定財務自由目標 (NTD)", value=30000000, step=1000000)
+
+st.write("🏆 **財務自由闖關進度**")
+m1, m2, m3, m4 = goal_amt * 0.25, goal_amt * 0.50, goal_amt * 0.75, goal_amt
+max_x = max(goal_amt * 1.05, total_mkt * 1.05) # 圖表動態邊界
+
+fig_prog = go.Figure()
+# 背景底色條 (尚未達成的部分)
+fig_prog.add_trace(go.Bar(
+    x=[max_x], y=["進度"], orientation='h', 
+    marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip'
+))
+# 實際進度條
+fig_prog.add_trace(go.Bar(
+    x=[total_mkt], y=["進度"], orientation='h', 
+    marker=dict(color='#00d4ff', line=dict(width=2, color='#58a6ff')), 
+    text=[f"目前總市值: ${int(total_mkt):,}"], 
+    textposition='inside', insidetextanchor='middle', textfont=dict(size=16, color='white', family='Consolas')
+))
+
+# 加入關卡線與標籤
+milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
+for val, name in milestones:
+    # 達成關卡變綠色，未達成橘色
+    color = "#3fb950" if total_mkt >= val else "#ff9f1c" 
+    fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
+    fig_prog.add_annotation(
+        x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", 
+        showarrow=False, font=dict(color=color, size=13, family='Consolas'), 
+        xanchor="center", yanchor="bottom", yshift=18
+    )
+
+fig_prog.update_layout(
+    barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False),
+    height=100, margin=dict(l=10, r=10, t=45, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False
+)
+st.plotly_chart(fig_prog, use_container_width=True)
+
+st.divider()
+
+# --- 7. 配置現況與目標 ---
 s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if total_mkt>0 else (0,0)
 c_p = round(100.0 - s_p - l_p, 1)
 
-# 電腦版緊湊一行
 c1, c2 = st.columns([1, 1])
 with c1: st.write("⚖️ **配置現況與 Beta 導航**")
 with c2: st.markdown(f"<div style='text-align:right;'><span class='beta-tag'>當前 Portfolio Beta: {curr_beta:.2f}</span></div>", unsafe_allow_html=True)
@@ -165,7 +207,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 目標調整
 t_col1, t_col2, t_col3 = st.columns(3)
 with t_col1: ts_pct = st.number_input("股票目標 %", 0, 100, 50, step=5)
 with t_col2: tl_pct = st.number_input("槓桿目標 %", 0, 100, 10, step=5)
@@ -184,8 +225,8 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 資產明細表 ---
-st.write("📋 **資產部位明細 (含 Beta、YTD)**")
+# --- 8. 資產明細表 ---
+st.write("📋 **資產部位明細**")
 if active_data:
     html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>成本均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
     for sid, d in active_data.items():
