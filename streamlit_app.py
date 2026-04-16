@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V84.3", layout="wide")
+st.set_page_config(page_title="退休戰情室 V85.0", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -149,35 +149,59 @@ for sid, v in cur_stocks.items():
 
 curr_beta = (beta_sum / total_mkt) if pd.notna(total_mkt) and total_mkt > 0 else 0.0
 
-# --- 5. 智能自動快照與昨日紀錄 ---
+# --- 5. 🤖 核心升級：全自動無感結算機制 ---
 now_tw = datetime.now(TW_TIMEZONE)
 today_str = now_tw.strftime("%Y-%m-%d")
 safe_mkt_int = int(total_mkt) if pd.notna(total_mkt) and not math.isnan(total_mkt) else 0
 
+yesterday_mkt = 0.0
+
 if not df_snap.empty:
     recorded_dates = df_snap['date'].astype(str).tolist()
-    if today_str not in recorded_dates and safe_mkt_int > 0:
-        client = get_client()
-        ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
-        ws_snap.append_row([today_str, safe_mkt_int])
-        st.cache_data.clear()
-
-yesterday_mkt = 0.0
-if not df_snap.empty:
+    
+    # 1. 先抓出「真正的」昨日紀錄
     valid_snaps = df_snap[df_snap['date'].astype(str) != today_str]
     if not valid_snaps.empty:
         yesterday_mkt = float(valid_snaps.iloc[-1]['total_mkt'])
 
-# 🌟 統一數學邏輯：今日損益絕對等於「總市值 - 昨日紀錄」
+    # 2. 自動判斷並寫入/更新今日快照
+    if safe_mkt_int > 0:
+        client = get_client()
+        if client:
+            ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
+            
+            if today_str not in recorded_dates:
+                # 情況 A：今天還沒存過，自動新增一行
+                ws_snap.append_row([today_str, safe_mkt_int])
+                st.cache_data.clear()
+            else:
+                # 情況 B：今天存過了，檢查數字有沒有變動
+                row_idx = recorded_dates.index(today_str)
+                current_recorded_val = int(df_snap.iloc[row_idx]['total_mkt'])
+                
+                if current_recorded_val != safe_mkt_int:
+                    # 如果即時市值改變了，自動覆蓋雲端舊數據（+2是因為Sheets從第1行開始且有標題）
+                    ws_snap.update_cell(row_idx + 2, 2, safe_mkt_int)
+                    st.cache_data.clear()
+else:
+    # 第一次使用系統的初始狀態
+    if safe_mkt_int > 0:
+        client = get_client()
+        if client:
+            ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
+            ws_snap.append_row([today_str, safe_mkt_int])
+            st.cache_data.clear()
+
+# 統一數學邏輯：今日損益絕對等於「即時總市值 - 昨日紀錄」
 today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
 # --- 6. 儀表板 (四格一列) ---
-st.markdown(f"#### 🛡️ 退休戰情室 V84.3")
+st.markdown(f"#### 🛡️ 退休戰情室 V85.0 (全自動結算)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
     <div class="metric-card"><div class="label-bright">💰 總資產市值</div><div class="val-main" style="color:#00d4ff">${fmt_int(total_mkt)}</div><div class="val-sub">昨日紀錄: ${fmt_int(yesterday_mkt)}</div></div>
-    <div class="metric-card"><div class="label-bright">📈 今日損益變動</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">基於昨日快照紀錄</div></div>
+    <div class="metric-card"><div class="label-bright">📈 今日損益</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">與昨日紀錄對比</div></div>
     <div class="metric-card"><div class="label-bright">📊 累積總盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${fmt_int(total_mkt-total_capital)}</div><div class="val-sub">本金: ${fmt_int(total_capital)}</div></div>
 </div>
 """, unsafe_allow_html=True)
@@ -266,23 +290,6 @@ if active_data:
     st.write(html, unsafe_allow_html=True)
 
 with st.sidebar:
-    st.header("📸 數據操作")
-    if st.button("強制重置今日快照", use_container_width=True):
-        client = get_client()
-        ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
-        today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
-        
-        dates = ws_snap.col_values(1)
-        if today_str in dates:
-            row_idx = dates.index(today_str) + 1 
-            ws_snap.update_cell(row_idx, 2, safe_mkt_int)
-        else:
-            ws_snap.append_row([today_str, safe_mkt_int])
-            
-        st.sidebar.success(f"已成功覆蓋 {today_str} 快照為 ${fmt_int(safe_mkt_int)}！")
-        st.cache_data.clear(); st.rerun()
-    
-    st.divider()
     st.header("🖊️ 交易錄入")
     op = st.selectbox("類型", ["買入", "賣出", "入金", "出金"])
     raw_sid = st.text_input("代號", value="00662").upper().strip()
