@@ -9,7 +9,7 @@ import re
 import pytz
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V82.0", layout="wide")
+st.set_page_config(page_title="退休戰情室 V83.0", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -82,35 +82,38 @@ def get_price_metrics(sid):
         except: continue
     return 0.0, 0.0, 0.0
 
-# --- 3. 視覺樣式 (舒適護眼、解決裁切) ---
+# --- 3. 視覺樣式 (極致緊湊 + 護眼防裁切) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
     
-    /* 放寬間距，解決裁切 */
-    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 15px; margin-bottom: 25px; }
+    /* 強制一列顯示 4 個指標，縮減間距 */
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+    @media (max-width: 1000px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
     
-    .metric-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 22px 15px; text-align: center; }
-    .label-bright { color: #8b949e; font-size: 1.05rem; font-weight: bold; margin-bottom: 10px; }
-    .val-main { font-size: 2.2rem; font-weight: bold; color: #ffffff; font-family: 'Consolas', monospace; margin-bottom: 6px; }
-    .val-sub { font-size: 0.95rem; color: #8b949e; }
+    /* 縮減卡片高度與內距 */
+    .metric-card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px 10px; text-align: center; }
+    .label-bright { color: #8b949e; font-size: 0.95rem; font-weight: bold; margin-bottom: 4px; }
+    .val-main { font-size: 1.7rem; font-weight: bold; color: #ffffff; font-family: 'Consolas', monospace; margin-bottom: 2px; line-height: 1.1; }
+    .val-sub { font-size: 0.85rem; color: #8b949e; }
     
-    .info-box { background: #161b22; border-radius: 12px; padding: 22px 15px; text-align: center; border: 1px solid #30363d; }
-    .box-pct { font-size: 2rem; font-weight: bold; color: #ffffff; margin: 12px 0; }
+    /* 緊湊配置方塊 */
+    .responsive-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 12px; }
+    .info-box { background: #161b22; border-radius: 8px; padding: 12px 10px; text-align: center; border: 1px solid #30363d; }
+    .box-pct { font-size: 1.6rem; font-weight: bold; color: #ffffff; margin: 4px 0; line-height: 1.1; }
     
-    .b-blue { border-top: 5px solid #58a6ff; }
-    .b-purple { border-top: 5px solid #bc8cff; }
-    .b-green { border-top: 5px solid #3fb950; }
+    .b-blue { border-top: 4px solid #58a6ff; }
+    .b-purple { border-top: 4px solid #bc8cff; }
+    .b-green { border-top: 4px solid #3fb950; }
     
-    /* Beta 標籤顯眼化 */
-    .beta-tag { background: #21262d; color: #ff9f1c; padding: 6px 14px; border-radius: 6px; font-size: 1rem; font-weight: bold; font-family: 'Consolas'; border: 1px solid #ff9f1c; display: inline-block; }
+    /* Beta 標籤緊湊化 */
+    .beta-tag { background: #21262d; color: #ff9f1c; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-family: 'Consolas'; border: 1px solid #ff9f1c; }
     
-    /* 表格舒適化 */
-    table { width: 100%; border-collapse: collapse; font-size: 1.15rem !important; }
-    th { background: #21262d !important; color: #8b949e !important; padding: 14px !important; text-align: left !important; }
-    td { padding: 14px !important; border-bottom: 1px solid #30363d !important; color: #c9d1d9 !important;}
+    /* 表格行高極致壓縮 */
+    table { width: 100%; border-collapse: collapse; font-size: 1.05rem !important; }
+    th { background: #21262d !important; color: #8b949e !important; padding: 8px 10px !important; text-align: left !important; }
+    td { padding: 8px 10px !important; border-bottom: 1px solid #30363d !important; color: #c9d1d9 !important;}
     
-    /* 漲跌顏色不再用刺眼純色 */
     .up { color: #f85149; font-weight: bold; } 
     .down { color: #3fb950; font-weight: bold; }
 </style>
@@ -158,17 +161,18 @@ if not df_snap.empty:
         yesterday_mkt = float(valid_snaps.iloc[-1]['total_mkt'])
 snap_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
-# --- 6. 儀表板與闖關圖 ---
-st.markdown(f"### 🛡️ 退休戰情室 V82.0")
+# --- 6. 儀表板 ---
+st.markdown(f"#### 🛡️ 退休戰情室 V83.0")
 st.markdown(f"""
 <div class="metric-grid">
-    <div class="metric-card"><div class="label-bright">💵 USD/TWD 匯率</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
-    <div class="metric-card"><div class="label-bright">💰 資產總市值</div><div class="val-main" style="color:#00d4ff">${int(total_mkt):,}</div><div class="val-sub">昨日紀錄: ${int(yesterday_mkt):,}</div></div>
+    <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
+    <div class="metric-card"><div class="label-bright">💰 總市值</div><div class="val-main" style="color:#00d4ff">${int(total_mkt):,}</div><div class="val-sub">昨日紀錄: ${int(yesterday_mkt):,}</div></div>
     <div class="metric-card"><div class="label-bright">📈 今日損益 (自動快照)</div><div class="val-main {'up' if snap_delta>=0 else 'down'}">${int(snap_delta):,}</div><div class="val-sub">基於跨日快照對比</div></div>
-    <div class="metric-card"><div class="label-bright">📊 真實累積總盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${int(total_mkt-total_capital):,}</div><div class="val-sub">本金: ${int(total_capital):,}</div></div>
+    <div class="metric-card"><div class="label-bright">📊 累積盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${int(total_mkt-total_capital):,}</div><div class="val-sub">本金: ${int(total_capital):,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
+# --- 7. 🏆 總市值闖關進度圖 (極度壓縮高度) ---
 with st.sidebar:
     st.header("🎯 闖關目標設定")
     goal_amt = st.number_input("設定財務自由目標 (NTD)", value=30000000, step=1000000)
@@ -179,63 +183,57 @@ max_x = max(goal_amt * 1.05, total_mkt * 1.05)
 
 fig_prog = go.Figure()
 fig_prog.add_trace(go.Bar(x=[max_x], y=["進度"], orientation='h', marker=dict(color='#21262d'), hoverinfo='skip'))
-fig_prog.add_trace(go.Bar(x=[total_mkt], y=["進度"], orientation='h', marker=dict(color='#00d4ff'), text=[f"目前: ${int(total_mkt):,}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=15, color='#ffffff', family='Consolas')))
+fig_prog.add_trace(go.Bar(x=[total_mkt], y=["進度"], orientation='h', marker=dict(color='#00d4ff'), text=[f"目前: ${int(total_mkt):,}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
 for val, name in milestones:
     color = "#3fb950" if total_mkt >= val else "#ff9f1c" 
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
-    fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=13), xanchor="center", yanchor="bottom", yshift=20)
+    fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=11), xanchor="center", yanchor="bottom", yshift=15)
 
-fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=130, margin=dict(l=10, r=10, t=55, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
+# 高度壓縮到 90px
+fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=90, margin=dict(l=10, r=10, t=35, b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
 
-st.divider()
 
-# --- 7. 配置現況與目標 ---
+# --- 8. 配置現況與目標 ---
 s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if total_mkt>0 else (0,0)
 c_p = round(100.0 - s_p - l_p, 1)
 
 c1, c2 = st.columns([1, 1])
 with c1: st.write("⚖️ **配置現況**")
-with c2: st.markdown(f"<div style='text-align:right; margin-bottom:10px;'><span class='beta-tag'>當前 Portfolio Beta: {curr_beta:.2f}</span></div>", unsafe_allow_html=True)
+with c2: st.markdown(f"<div style='text-align:right; margin-bottom:5px;'><span class='beta-tag'>當前 Portfolio Beta: {curr_beta:.2f}</span></div>", unsafe_allow_html=True)
 
 st.markdown(f"""
-<div class="metric-grid" style="grid-template-columns: repeat(3, 1fr);">
-    <div class="info-box b-blue"><div class="label-bright">現況 股票</div><div class="box-pct">{s_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(s_v):,}</div></div>
-    <div class="info-box b-purple"><div class="label-bright">現況 槓桿</div><div class="box-pct">{l_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(l_v):,}</div></div>
-    <div class="info-box b-green"><div class="label-bright">現況 類現金</div><div class="box-pct">{c_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(c_v):,}</div></div>
+<div class="responsive-grid">
+    <div class="info-box b-blue"><div class="label-bright">現況 股票</div><div class="box-pct">{s_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(s_v):,}</div></div>
+    <div class="info-box b-purple"><div class="label-bright">現況 槓桿</div><div class="box-pct">{l_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(l_v):,}</div></div>
+    <div class="info-box b-green"><div class="label-bright">現況 類現金</div><div class="box-pct">{c_p}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(c_v):,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-# 目標調整
 t_col1, t_col2, t_col3 = st.columns(3)
 with t_col1: ts_pct = st.number_input("股票目標 %", 0, 100, 50, step=5)
 with t_col2: tl_pct = st.number_input("槓桿目標 %", 0, 100, 10, step=5)
 with t_col3: 
     tc_pct = 100 - ts_pct - tl_pct
-    st.info(f"類現金目標: {tc_pct}%")
-
-# 🌟 目標 Beta 強勢歸位
-target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
-st.markdown(f"<div style='text-align:right; margin-bottom:15px;'><span class='beta-tag'>預期目標 Beta: {target_beta:.2f}</span></div>", unsafe_allow_html=True)
+    target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
+    st.markdown(f"<div style='margin-top:25px; text-align:right;'><span class='beta-tag'>預期目標 Beta: {target_beta:.2f}</span></div>", unsafe_allow_html=True)
 
 ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*tc_pct/100
 
 st.markdown(f"""
-<div class="metric-grid" style="grid-template-columns: repeat(3, 1fr);">
-    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(ts_amt):,}</div></div>
-    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(tl_amt):,}</div></div>
-    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.1rem;">${int(tc_amt):,}</div></div>
+<div class="responsive-grid">
+    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(ts_amt):,}</div></div>
+    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tl_amt):,}</div></div>
+    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${int(tc_amt):,}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-st.divider()
-
-# --- 8. 資產明細表 ---
-st.write("📋 **資產部位明細與 YTD 績效**")
+# --- 9. 資產明細表 (表格緊湊化) ---
+st.write("📋 **資產部位明細**")
 if active_data:
-    html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>成本均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
+    html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
     for sid, d in active_data.items():
         if sid == "CASH" and d['sh'] == 0: continue
         pct = (d['m']/total_mkt*100) if total_mkt!=0 else 0
@@ -262,7 +260,7 @@ with st.sidebar:
         ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
         today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
         ws_snap.append_row([today_str, int(total_mkt)])
-        st.sidebar.success(f"已強制更新 {today_str} 快照！")
+        st.sidebar.success(f"已更新 {today_str} 快照！")
         st.cache_data.clear(); st.rerun()
     st.divider()
     st.header("🖊️ 交易錄入")
