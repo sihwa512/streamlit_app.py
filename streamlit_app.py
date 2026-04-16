@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V84.2", layout="wide")
+st.set_page_config(page_title="退休戰情室 V84.3", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -78,13 +78,11 @@ def get_price_metrics(sid):
     for tsid in [f"{sid}.TW", f"{sid}.TWO", sid]:
         try:
             t = yf.Ticker(tsid)
-            # 🌟 1. 優先嘗試獲取盤中真實跳動現價
             try: curr = float(t.fast_info.last_price)
             except: curr = 0.0
                 
             hist = t.history(period="1mo").dropna(subset=['Close'])
             if not hist.empty:
-                # 🌟 2. 若即時價失效，才退回使用歷史最後一筆
                 if pd.isna(curr) or curr == 0.0:
                     curr = float(hist['Close'].iloc[-1])
                     
@@ -126,7 +124,7 @@ df_hist, cur_stocks, total_capital, df_snap = fetch_cloud_data()
 fx = yf.Ticker("TWD=X").fast_info.last_price or 32.3
 if pd.isna(fx): fx = 32.3
 
-total_mkt, today_delta, beta_sum = 0.0, 0.0, 0.0
+total_mkt, beta_sum = 0.0, 0.0
 s_v, l_v, c_v = 0.0, 0.0, 0.0
 active_data = {}
 
@@ -140,7 +138,6 @@ for sid, v in cur_stocks.items():
         
     m = v['sh'] * curr
     total_mkt += m
-    if sid != "CASH": today_delta += (curr - prev) * v['sh']
     
     b = 1.0
     if "L" in sid or "631" in sid: l_v += m; b = 2.0
@@ -165,20 +162,22 @@ if not df_snap.empty:
         ws_snap.append_row([today_str, safe_mkt_int])
         st.cache_data.clear()
 
-# 抓取「真正的」昨日紀錄
 yesterday_mkt = 0.0
 if not df_snap.empty:
     valid_snaps = df_snap[df_snap['date'].astype(str) != today_str]
     if not valid_snaps.empty:
         yesterday_mkt = float(valid_snaps.iloc[-1]['total_mkt'])
 
-# --- 6. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V84.2")
+# 🌟 統一數學邏輯：今日損益絕對等於「總市值 - 昨日紀錄」
+today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
+
+# --- 6. 儀表板 (四格一列) ---
+st.markdown(f"#### 🛡️ 退休戰情室 V84.3")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
     <div class="metric-card"><div class="label-bright">💰 總資產市值</div><div class="val-main" style="color:#00d4ff">${fmt_int(total_mkt)}</div><div class="val-sub">昨日紀錄: ${fmt_int(yesterday_mkt)}</div></div>
-    <div class="metric-card"><div class="label-bright">📈 今日損益變動</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">基於最新報價差額</div></div>
+    <div class="metric-card"><div class="label-bright">📈 今日損益變動</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">基於昨日快照紀錄</div></div>
     <div class="metric-card"><div class="label-bright">📊 累積總盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${fmt_int(total_mkt-total_capital)}</div><div class="val-sub">本金: ${fmt_int(total_capital)}</div></div>
 </div>
 """, unsafe_allow_html=True)
@@ -273,10 +272,9 @@ with st.sidebar:
         ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
         today_str = datetime.now(TW_TIMEZONE).strftime("%Y-%m-%d")
         
-        # 🌟 修改點：如果今天已經有紀錄，則「覆蓋」而不是「新增」
         dates = ws_snap.col_values(1)
         if today_str in dates:
-            row_idx = dates.index(today_str) + 1 # Google Sheets 從 1 開始
+            row_idx = dates.index(today_str) + 1 
             ws_snap.update_cell(row_idx, 2, safe_mkt_int)
         else:
             ws_snap.append_row([today_str, safe_mkt_int])
