@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V85.0", layout="wide")
+st.set_page_config(page_title="退休戰情室 V85.1", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -94,7 +94,7 @@ def get_price_metrics(sid):
         except: continue
     return 0.0, 0.0, 0.0
 
-# --- 3. 視覺樣式 (極致緊湊一行版) ---
+# --- 3. 視覺樣式 (舒適護眼) ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
@@ -149,7 +149,7 @@ for sid, v in cur_stocks.items():
 
 curr_beta = (beta_sum / total_mkt) if pd.notna(total_mkt) and total_mkt > 0 else 0.0
 
-# --- 5. 🤖 核心升級：全自動無感結算機制 ---
+# --- 5. 自動結算機制 ---
 now_tw = datetime.now(TW_TIMEZONE)
 today_str = now_tw.strftime("%Y-%m-%d")
 safe_mkt_int = int(total_mkt) if pd.notna(total_mkt) and not math.isnan(total_mkt) else 0
@@ -158,33 +158,24 @@ yesterday_mkt = 0.0
 
 if not df_snap.empty:
     recorded_dates = df_snap['date'].astype(str).tolist()
-    
-    # 1. 先抓出「真正的」昨日紀錄
     valid_snaps = df_snap[df_snap['date'].astype(str) != today_str]
     if not valid_snaps.empty:
         yesterday_mkt = float(valid_snaps.iloc[-1]['total_mkt'])
 
-    # 2. 自動判斷並寫入/更新今日快照
     if safe_mkt_int > 0:
         client = get_client()
         if client:
             ws_snap = client.open_by_key(GS_ID).worksheet("DailySnapshots")
-            
             if today_str not in recorded_dates:
-                # 情況 A：今天還沒存過，自動新增一行
                 ws_snap.append_row([today_str, safe_mkt_int])
                 st.cache_data.clear()
             else:
-                # 情況 B：今天存過了，檢查數字有沒有變動
                 row_idx = recorded_dates.index(today_str)
                 current_recorded_val = int(df_snap.iloc[row_idx]['total_mkt'])
-                
                 if current_recorded_val != safe_mkt_int:
-                    # 如果即時市值改變了，自動覆蓋雲端舊數據（+2是因為Sheets從第1行開始且有標題）
                     ws_snap.update_cell(row_idx + 2, 2, safe_mkt_int)
                     st.cache_data.clear()
 else:
-    # 第一次使用系統的初始狀態
     if safe_mkt_int > 0:
         client = get_client()
         if client:
@@ -192,21 +183,20 @@ else:
             ws_snap.append_row([today_str, safe_mkt_int])
             st.cache_data.clear()
 
-# 統一數學邏輯：今日損益絕對等於「即時總市值 - 昨日紀錄」
 today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
-# --- 6. 儀表板 (四格一列) ---
-st.markdown(f"#### 🛡️ 退休戰情室 V85.0 (全自動結算)")
+# --- 6. 儀表板 ---
+st.markdown(f"#### 🛡️ 退休戰情室 V85.1 (全自動結算)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
-    <div class="metric-card"><div class="label-bright">💰 總資產市值</div><div class="val-main" style="color:#00d4ff">${fmt_int(total_mkt)}</div><div class="val-sub">昨日紀錄: ${fmt_int(yesterday_mkt)}</div></div>
+    <div class="metric-card"><div class="label-bright">💰 總資產市值</div><div class="val-main" style="color:#2f81f7">${fmt_int(total_mkt)}</div><div class="val-sub">昨日紀錄: ${fmt_int(yesterday_mkt)}</div></div>
     <div class="metric-card"><div class="label-bright">📈 今日損益</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">與昨日紀錄對比</div></div>
     <div class="metric-card"><div class="label-bright">📊 累積總盈虧</div><div class="val-main {'up' if (total_mkt-total_capital)>=0 else 'down'}">${fmt_int(total_mkt-total_capital)}</div><div class="val-sub">本金: ${fmt_int(total_capital)}</div></div>
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 🏆 闖關進度圖 ---
+# --- 7. 🏆 闖關進度圖 (修復裁切與顏色) ---
 with st.sidebar:
     st.header("🎯 闖關目標設定")
     goal_amt = st.number_input("設定財務自由目標 (NTD)", value=30000000, step=1000000)
@@ -217,16 +207,21 @@ safe_display_mkt = safe_mkt_int if safe_mkt_int > 0 else 0
 max_x = max(goal_amt * 1.05, safe_display_mkt * 1.05)
 
 fig_prog = go.Figure()
-fig_prog.add_trace(go.Bar(x=[max_x], y=["進度"], orientation='h', marker=dict(color='#21262d'), hoverinfo='skip'))
-fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=["進度"], orientation='h', marker=dict(color='#00d4ff'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
+# 底色條 (稍暗的灰色，增加質感)
+fig_prog.add_trace(go.Bar(x=[max_x], y=["進度"], orientation='h', marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip'))
+# 進度條 (改為舒適的科技藍)
+fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=["進度"], orientation='h', marker=dict(color='#2f81f7'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
 for val, name in milestones:
-    color = "#3fb950" if safe_display_mkt >= val else "#ff9f1c" 
+    # 達標用護眼綠，未達標用低調淺灰
+    color = "#3fb950" if safe_display_mkt >= val else "#8b949e" 
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
-    fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=11), xanchor="center", yanchor="bottom", yshift=15)
+    # 🌟 解決裁切：yshift 調整，且整體圖表高度拉高
+    fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=12), xanchor="center", yanchor="bottom", yshift=18)
 
-fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=90, margin=dict(l=10, r=10, t=35, b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
+# 🌟 解決裁切：高度拉高到 110px，頂部 margin (t) 放寬到 45
+fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=110, margin=dict(l=10, r=10, t=45, b=5), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
 
 # --- 8. 配置現況與目標 ---
