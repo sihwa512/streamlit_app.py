@@ -111,7 +111,7 @@ st.markdown("""
     .b-blue { border-top: 4px solid #58a6ff; }
     .b-purple { border-top: 4px solid #bc8cff; }
     .b-green { border-top: 4px solid #3fb950; }
-    .beta-tag { background: #21262d; color: #ff9f1c; padding: 2px 8px; border-radius: 4px; font-size: 0.85rem; font-family: 'Consolas'; border: 1px solid #ff9f1c; }
+    .beta-tag { background: #21262d; color: #ff9f1c; padding: 4px 10px; border-radius: 4px; font-size: 0.95rem; font-family: 'Consolas'; border: 1px solid #ff9f1c; white-space: nowrap; }
     .alert-tag { background: #4a0000; color: #ff7b72; padding: 2px 6px; border-radius: 4px; font-size: 0.85rem; font-weight: bold; border: 1px solid #ff7b72; margin-left: 5px;}
     table { width: 100%; border-collapse: collapse; font-size: 1.1rem !important; }
     th { background: #21262d !important; color: #8b949e !important; padding: 8px 10px !important; text-align: left !important; }
@@ -206,7 +206,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 🏆 闖關進度圖與歷史走勢 (修復條狀太細問題) ---
+# --- 7. 🏆 闖關進度圖與歷史走勢 ---
 with st.sidebar:
     st.header("🎯 戰略目標設定")
     goal_amt = st.number_input("財務自由目標 (NTD)", value=30000000, step=1000000)
@@ -220,7 +220,7 @@ max_x = max(goal_amt * 1.05, safe_display_mkt * 1.05)
 
 fig_prog = go.Figure()
 fig_prog.add_trace(go.Bar(x=[max_x], y=[" "], orientation='h', marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip'))
-# 拿掉 width 限制，讓進度條恢復粗壯
+# 拿掉 width，讓條狀恢復飽滿
 fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=[" "], orientation='h', marker=dict(color='#2f81f7'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=18, color='#ffffff', family='Consolas')))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
@@ -229,7 +229,7 @@ for val, name in milestones:
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
     fig_prog.add_annotation(x=val, y=1, yref="paper", text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=12), xanchor="center", yanchor="bottom", yshift=5)
 
-# 🌟 放寬高度至 150px，確保圖表粗壯且文字有足夠空間
+# 解決裁切：高度調高至 150px
 fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=150, margin=dict(l=15, r=15, t=60, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
 
@@ -261,7 +261,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 🌟 目標設定區與 Beta 強勢保護 (改用 3 欄並透過 CSS 穩固 Beta 標籤)
+# 🌟 絕對不跑版的目標設定區
 t_col1, t_col2, t_col3 = st.columns(3)
 with t_col1: ts_pct = st.number_input("🎯 股票目標 %", 0, 100, 50, step=5)
 with t_col2: tl_pct = st.number_input("🎯 槓桿目標 %", 0, 100, 10, step=5)
@@ -269,15 +269,23 @@ with t_col3:
     tc_pct = 100 - ts_pct - tl_pct
     target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
     
-    # 建立一個整合框，保證現金目標跟 Beta 永遠綁在一起不會跑掉
+    # 使用 Flexbox 確保兩個數值絕對在同一行且兩端對齊
     st.markdown(f"""
     <div style="display:flex; justify-content:space-between; align-items:center; background:#1c2128; padding:12px 15px; border-radius:8px; border:1px solid #30363d; margin-top:28px;">
-        <span style="color:#8b949e; font-weight:bold;">類現金目標: {tc_pct}%</span>
-        <span class='beta-tag'>預期目標 Beta: {target_beta:.2f}</span>
+        <span style="color:#8b949e; font-weight:bold; font-size:0.95rem;">類現金目標: {tc_pct}%</span>
+        <span class='beta-tag'>目標 Beta: {target_beta:.2f}</span>
     </div>
     """, unsafe_allow_html=True)
 
 ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*tc_pct/100
+
+st.markdown(f"""
+<div class="responsive-grid">
+    <div class="info-box b-blue" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 股票</div><div class="box-pct">{ts_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(ts_amt)}</div></div>
+    <div class="info-box b-purple" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 槓桿</div><div class="box-pct">{tl_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(tl_amt)}</div></div>
+    <div class="info-box b-green" style="background:#1c2128; opacity:0.85;"><div class="label-bright">🎯 目標 類現金</div><div class="box-pct">{tc_pct}%</div><div style="font-family:'Consolas'; color:#8b949e; font-size:1.05rem;">${fmt_int(tc_amt)}</div></div>
+</div>
+""", unsafe_allow_html=True)
 
 # --- 9. 資產明細表 (加入動態警示) ---
 st.write("📋 **資產部位明細 (智能警示版)**")
