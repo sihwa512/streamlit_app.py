@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V86.1", layout="wide")
+st.set_page_config(page_title="退休戰情室 V87.0", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -34,11 +34,11 @@ def fmt_int(val):
     try: return f"{int(float(val)):,}"
     except: return "0"
 
-# --- 2. 數據引擎 ---
+# --- 2. 數據引擎 (🌟 加入 Settings 雲端儲存) ---
 @st.cache_data(ttl=60)
 def fetch_cloud_data():
     client = get_client()
-    if not client: return pd.DataFrame(), {}, 0.0, pd.DataFrame()
+    if not client: return pd.DataFrame(), {}, 0.0, pd.DataFrame(), {}
     try:
         doc = client.open_by_key(GS_ID)
         df_t = pd.DataFrame(doc.worksheet("Transactions").get_all_records())
@@ -48,6 +48,24 @@ def fetch_cloud_data():
             ws_snap = doc.add_worksheet(title="DailySnapshots", rows="1000", cols="5")
             ws_snap.append_row(["date", "total_mkt"])
             df_snap = pd.DataFrame(columns=["date", "total_mkt"])
+            
+        # 讀取或建立設定檔 (預設 40/30/30)
+        try:
+            df_settings = pd.DataFrame(doc.worksheet("Settings").get_all_records())
+        except:
+            ws_settings = doc.add_worksheet(title="Settings", rows="10", cols="2")
+            ws_settings.append_row(["key", "value"])
+            ws_settings.append_row(["target_stock", 40])
+            ws_settings.append_row(["target_leverage", 30])
+            ws_settings.append_row(["goal_amt", 30000000])
+            ws_settings.append_row(["deviation_band", 5.0])
+            df_settings = pd.DataFrame([
+                {"key": "target_stock", "value": 40},
+                {"key": "target_leverage", "value": 30},
+                {"key": "goal_amt", "value": 30000000},
+                {"key": "deviation_band", "value": 5.0}
+            ])
+        settings_dict = dict(zip(df_settings['key'], df_settings['value']))
             
         stocks, total_cap, running_cash = {}, 0.0, 0.0
         if not df_t.empty:
@@ -69,8 +87,8 @@ def fetch_cloud_data():
             stocks["CASH"] = {"sh": running_cash, "cost": running_cash, "avg": 1.0}
         for s in stocks:
             if s != "CASH": stocks[s]["avg"] = stocks[s]["cost"]/stocks[s]["sh"] if stocks[s]["sh"] > 0 else 0
-        return df_t, stocks, total_cap, df_snap
-    except: return pd.DataFrame(), {}, 0.0, pd.DataFrame()
+        return df_t, stocks, total_cap, df_snap, settings_dict
+    except: return pd.DataFrame(), {}, 0.0, pd.DataFrame(), {}
 
 @st.cache_data(ttl=300)
 def get_price_metrics(sid):
@@ -122,9 +140,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- 4. 數據加載與分類 ---
-df_hist, cur_stocks, total_capital, df_snap = fetch_cloud_data()
+df_hist, cur_stocks, total_capital, df_snap, settings_dict = fetch_cloud_data()
 fx = yf.Ticker("TWD=X").fast_info.last_price or 32.3
 if pd.isna(fx): fx = 32.3
+
+# 🌟 從雲端提取預設值
+default_ts = int(settings_dict.get("target_stock", 40)) if settings_dict else 40
+default_tl = int(settings_dict.get("target_leverage", 30)) if settings_dict else 30
+default_goal = int(settings_dict.get("goal_amt", 30000000)) if settings_dict else 30000000
+default_dev = float(settings_dict.get("deviation_band", 5.0)) if settings_dict else 5.0
 
 total_mkt, beta_sum = 0.0, 0.0
 s_v, l_v, c_v = 0.0, 0.0, 0.0
@@ -195,7 +219,7 @@ today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 drawdown_pct = ((total_mkt - historical_high) / historical_high * 100) if historical_high > 0 else 0.0
 
 # --- 6. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V86.1 (戰術大腦)")
+st.markdown(f"#### 🛡️ 退休戰情室 V87.0 (雲端記憶版)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
@@ -209,8 +233,8 @@ st.markdown(f"""
 # --- 7. 🏆 闖關進度圖與歷史走勢 ---
 with st.sidebar:
     st.header("🎯 戰略目標設定")
-    goal_amt = st.number_input("財務自由目標 (NTD)", value=30000000, step=1000000)
-    deviation_band = st.number_input("再平衡容許誤差 ±%", min_value=1.0, max_value=20.0, value=5.0, step=1.0)
+    goal_amt = st.number_input("財務自由目標 (NTD)", value=default_goal, step=1000000)
+    deviation_band = st.number_input("再平衡容許誤差 ±%", min_value=1.0, max_value=20.0, value=default_dev, step=1.0)
 
 st.write("🏆 **財務自由闖關進度**")
 
@@ -220,7 +244,6 @@ max_x = max(goal_amt * 1.05, safe_display_mkt * 1.05)
 
 fig_prog = go.Figure()
 fig_prog.add_trace(go.Bar(x=[max_x], y=[" "], orientation='h', marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip'))
-# 拿掉 width，讓條狀恢復飽滿
 fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=[" "], orientation='h', marker=dict(color='#2f81f7'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=18, color='#ffffff', family='Consolas')))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
@@ -229,7 +252,6 @@ for val, name in milestones:
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
     fig_prog.add_annotation(x=val, y=1, yref="paper", text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=12), xanchor="center", yanchor="bottom", yshift=5)
 
-# 解決裁切：高度調高至 150px
 fig_prog.update_layout(barmode='overlay', xaxis=dict(range=[0, max_x], visible=False), yaxis=dict(visible=False), height=150, margin=dict(l=15, r=15, t=60, b=10), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', showlegend=False)
 st.plotly_chart(fig_prog, use_container_width=True)
 
@@ -245,7 +267,7 @@ with st.expander("📊 展開歷史資產成長曲線 (Equity Curve)"):
 
 st.divider()
 
-# --- 8. 配置現況與目標 ---
+# --- 8. 配置現況與目標 (🌟 永久保存功能區) ---
 s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if pd.notna(total_mkt) and total_mkt>0 else (0,0)
 c_p = round(100.0 - s_p - l_p, 1)
 
@@ -261,21 +283,40 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# 🌟 絕對不跑版的目標設定區
-t_col1, t_col2, t_col3 = st.columns(3)
-with t_col1: ts_pct = st.number_input("🎯 股票目標 %", 0, 100, 50, step=5)
-with t_col2: tl_pct = st.number_input("🎯 槓桿目標 %", 0, 100, 10, step=5)
+# 佈局分為四格，最後一格用來放儲存按鈕
+t_col1, t_col2, t_col3, t_col4 = st.columns([2, 2, 4, 2])
+with t_col1: ts_pct = st.number_input("🎯 股票目標 %", 0, 100, default_ts, step=5)
+with t_col2: tl_pct = st.number_input("🎯 槓桿目標 %", 0, 100, default_tl, step=5)
 with t_col3: 
     tc_pct = 100 - ts_pct - tl_pct
     target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
     
-    # 使用 Flexbox 確保兩個數值絕對在同一行且兩端對齊
     st.markdown(f"""
     <div style="display:flex; justify-content:space-between; align-items:center; background:#1c2128; padding:12px 15px; border-radius:8px; border:1px solid #30363d; margin-top:28px;">
         <span style="color:#8b949e; font-weight:bold; font-size:0.95rem;">類現金目標: {tc_pct}%</span>
         <span class='beta-tag'>目標 Beta: {target_beta:.2f}</span>
     </div>
     """, unsafe_allow_html=True)
+
+with t_col4:
+    st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
+    if st.button("💾 永久保存", use_container_width=True):
+        client = get_client()
+        if client:
+            try:
+                ws_settings = client.open_by_key(GS_ID).worksheet("Settings")
+                ws_settings.clear()
+                ws_settings.append_rows([
+                    ["key", "value"],
+                    ["target_stock", ts_pct],
+                    ["target_leverage", tl_pct],
+                    ["goal_amt", goal_amt],
+                    ["deviation_band", deviation_band]
+                ])
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"雲端儲存失敗: {e}")
 
 ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*tc_pct/100
 
