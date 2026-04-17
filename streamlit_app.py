@@ -8,10 +8,10 @@ import plotly.graph_objects as go
 import re
 import pytz
 import math
-import requests # 🌟 新增：用於發送 Line 推播
+import requests
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V88.0", layout="wide")
+st.set_page_config(page_title="退休戰情室 V89.0", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -35,7 +35,7 @@ def fmt_int(val):
     try: return f"{int(float(val)):,}"
     except: return "0"
 
-# --- 2. 數據引擎 (加入新參數) ---
+# --- 2. 數據引擎 ---
 @st.cache_data(ttl=60)
 def fetch_cloud_data():
     client = get_client()
@@ -56,7 +56,8 @@ def fetch_cloud_data():
             default_settings = [
                 {"key": "target_stock", "value": 40}, {"key": "target_leverage", "value": 30},
                 {"key": "goal_amt", "value": 30000000}, {"key": "deviation_band", "value": 5.0},
-                {"key": "borrowed_amt", "value": 0}, {"key": "expected_yield", "value": 5.0}, {"key": "line_token", "value": ""}
+                {"key": "borrowed_amt", "value": 0}, {"key": "expected_yield", "value": 5.0}, 
+                {"key": "line_channel_token", "value": ""}, {"key": "line_user_id", "value": ""}
             ]
             for s in default_settings: ws_settings.append_row([s["key"], s["value"]])
             df_settings = pd.DataFrame(default_settings)
@@ -106,15 +107,20 @@ def get_price_metrics(sid):
 @st.cache_data(ttl=3600)
 def get_benchmark_data(start_date):
     try:
-        bm = yf.download("0050.TW", start=start_date, progress=False)
-        return bm['Close'].dropna() if not bm.empty else pd.Series()
-    except: return pd.Series()
+        t = yf.Ticker("0050.TW")
+        hist = t.history(start=start_date)
+        if not hist.empty and 'Close' in hist.columns:
+            df = hist[['Close']].copy().reset_index()
+            df.columns = ['Date', 'Close'] 
+            df['Date'] = pd.to_datetime(df['Date']).dt.strftime('%Y-%m-%d')
+            return df
+    except: pass
+    return pd.DataFrame()
 
-# --- 3. 視覺樣式 (6格一列極致佈局) ---
+# --- 3. 視覺樣式 ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
-    /* 🌟 擴展為 6 格一列，容納維持率與現金流 */
     .metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; margin-bottom: 12px; }
     @media (max-width: 1400px) { .metric-grid { grid-template-columns: repeat(3, 1fr); } }
     @media (max-width: 800px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -140,14 +146,15 @@ df_hist, cur_stocks, total_capital, df_snap, settings_dict = fetch_cloud_data()
 fx = yf.Ticker("TWD=X").fast_info.last_price or 32.3
 if pd.isna(fx): fx = 32.3
 
-# 提取設定值
 default_ts = int(settings_dict.get("target_stock", 40)) if settings_dict else 40
 default_tl = int(settings_dict.get("target_leverage", 30)) if settings_dict else 30
 default_goal = int(settings_dict.get("goal_amt", 30000000)) if settings_dict else 30000000
 default_dev = float(settings_dict.get("deviation_band", 5.0)) if settings_dict else 5.0
 default_borrowed = float(settings_dict.get("borrowed_amt", 0.0)) if settings_dict else 0.0
 default_yield = float(settings_dict.get("expected_yield", 5.0)) if settings_dict else 5.0
-line_token = str(settings_dict.get("line_token", "")) if settings_dict else ""
+# 🌟 更新為 Messaging API 需要的兩組 Token
+line_channel_token = str(settings_dict.get("line_channel_token", "")) if settings_dict else ""
+line_user_id = str(settings_dict.get("line_user_id", "")) if settings_dict else ""
 
 total_mkt, beta_sum, s_v, l_v, c_v = 0.0, 0.0, 0.0, 0.0, 0.0
 active_data = {}
@@ -171,7 +178,6 @@ curr_beta = (beta_sum / total_mkt) if pd.notna(total_mkt) and total_mkt > 0 else
 now_tw = datetime.now(TW_TIMEZONE)
 today_str = now_tw.strftime("%Y-%m-%d")
 safe_mkt_int = int(total_mkt) if pd.notna(total_mkt) and not math.isnan(total_mkt) else 0
-
 yesterday_mkt, historical_high = 0.0, safe_mkt_int
 
 if not df_snap.empty:
@@ -204,15 +210,14 @@ else:
 today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 drawdown_pct = ((total_mkt - historical_high) / historical_high * 100) if historical_high > 0 else 0.0
 
-# 🌟 新增計算：質押維持率與月現金流
 margin_ratio = (total_mkt / default_borrowed * 100) if default_borrowed > 0 else float('inf')
 margin_color = "#ff7b72" if margin_ratio < 160 else "#3fb950"
 margin_display = f"{margin_ratio:.0f}%" if margin_ratio != float('inf') else "無借款"
 
 monthly_cf = (total_mkt * (default_yield / 100)) / 12
 
-# --- 6. 儀表板 (全視野 6 格佈局) ---
-st.markdown(f"#### 🛡️ 退休戰情室 V88.0 (終極全視野版)")
+# --- 6. 儀表板 ---
+st.markdown(f"#### 🛡️ 退休戰情室 V89.0 (Messaging API 升級版)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div><div class="val-sub">匯率參考</div></div>
@@ -220,7 +225,7 @@ st.markdown(f"""
     <div class="metric-card"><div class="label-bright">📈 今日損益</div><div class="val-main {'up' if today_delta>=0 else 'down'}">${fmt_int(today_delta)}</div><div class="val-sub">與昨日對比</div></div>
     <div class="metric-card"><div class="label-bright">📉 距前高跌幅 (MDD)</div><div class="val-main" style="color:{'#ff7b72' if drawdown_pct < -5 else '#c9d1d9'}">{drawdown_pct:.1f}%</div><div class="val-sub">前高: ${fmt_int(historical_high)}</div></div>
     <div class="metric-card"><div class="label-bright">🏦 擔保維持率</div><div class="val-main" style="color:{margin_color}">{margin_display}</div><div class="val-sub">借款: ${fmt_int(default_borrowed)}</div></div>
-    <div class="metric-card"><div class="label-bright">💧 預估月被動收入</div><div class="val-main" style="color:#ab7df8">${fmt_int(monthly_cf)}</div><div class="val-sub">年化殖利率設定: {default_yield}%</div></div>
+    <div class="metric-card"><div class="label-bright">💧 預估月現金流</div><div class="val-main" style="color:#ab7df8">${fmt_int(monthly_cf)}</div><div class="val-sub">年化殖利率: {default_yield}%</div></div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -255,24 +260,17 @@ with st.expander("📊 展開歷史走勢與大盤對比 (Benchmark Alpha)"):
         df_snap_sorted = df_snap.sort_values(by="date")
         start_date = df_snap_sorted['date'].iloc[0]
         
-        # 正規化計算 (Base 100)
         df_snap_sorted['norm_mkt'] = (pd.to_numeric(df_snap_sorted['total_mkt']) / pd.to_numeric(df_snap_sorted['total_mkt']).iloc[0]) * 100
         
         fig_curve = go.Figure()
-        # 繪製您的資產走勢
         fig_curve.add_trace(go.Scatter(x=df_snap_sorted['date'], y=df_snap_sorted['norm_mkt'], name="我的戰情室組合", mode='lines+markers', line=dict(color='#2f81f7', width=3)))
         
-        # 🌟 獲取並繪製台灣 50 (0050) 作為基準
-        bm_data = get_benchmark_data(start_date)
-        if not bm_data.empty:
-            bm_df = bm_data.reset_index()
-            bm_df['Date'] = bm_df['Date'].dt.strftime('%Y-%m-%d')
-            # 找出有交集的日期進行繪圖
+        bm_df = get_benchmark_data(start_date)
+        if not bm_df.empty:
             bm_df_filtered = bm_df[bm_df['Date'].isin(df_snap_sorted['date'].tolist())].copy()
             if not bm_df_filtered.empty:
-                # 取得有交集的第一天的價格作為基準點
-                first_bm_price = bm_df_filtered.iloc[0]['Close']
-                if pd.notna(first_bm_price) and first_bm_price > 0:
+                first_bm_price = float(bm_df_filtered.iloc[0]['Close'])
+                if first_bm_price > 0:
                     bm_df_filtered['norm_bm'] = (bm_df_filtered['Close'] / first_bm_price) * 100
                     fig_curve.add_trace(go.Scatter(x=bm_df_filtered['Date'], y=bm_df_filtered['norm_bm'], name="基準大盤 (0050.TW)", mode='lines', line=dict(color='#8b949e', width=2, dash='dot')))
 
@@ -283,7 +281,7 @@ with st.expander("📊 展開歷史走勢與大盤對比 (Benchmark Alpha)"):
 
 st.divider()
 
-# --- 8. 配置現況、設定儲存與 Line 推播 ---
+# --- 8. 配置現況、設定儲存 ---
 s_p, l_p = round(s_v/total_mkt*100, 1), round(l_v/total_mkt*100, 1) if pd.notna(total_mkt) and total_mkt>0 else (0,0)
 c_p = round(100.0 - s_p - l_p, 1)
 
@@ -306,12 +304,13 @@ with t_col3:
     tc_pct = 100 - ts_pct - tl_pct
     target_beta = (ts_pct * 1.0 + tl_pct * 2.0) / 100
     st.markdown(f"""
-    <div style="display:flex; justify-content:space-between; align-items:center; background:#1c2128; padding:12px 15px; border-radius:8px; border:1px solid #30363d; margin-top:28px;">
-        <span style="color:#8b949e; font-weight:bold; font-size:0.95rem;">類現金目標: {tc_pct}%</span>
-        <span class='beta-tag'>目標 Beta: {target_beta:.2f}</span>
+    <div style="background:#161b22; padding:12px 15px; border-radius:8px; border:1px solid #30363d; margin-top:28px; text-align:center;">
+        <span style="color:#8b949e; font-weight:bold; font-size:1.05rem; margin-right:20px;">類現金: {tc_pct}%</span>
+        <span class='beta-tag'>🎯 目標 Beta: {target_beta:.2f}</span>
     </div>
     """, unsafe_allow_html=True)
 
+# 🌟 更新保存邏輯：同時保存兩個 Token
 with t_col4:
     st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
     if st.button("💾 永久保存設定", use_container_width=True):
@@ -325,7 +324,7 @@ with t_col4:
                     ["target_stock", ts_pct], ["target_leverage", tl_pct],
                     ["goal_amt", goal_amt], ["deviation_band", deviation_band],
                     ["borrowed_amt", borrowed_input], ["expected_yield", yield_input],
-                    ["line_token", line_token] # 保持 token 不變，在側邊欄修改
+                    ["line_channel_token", line_channel_token], ["line_user_id", line_user_id] 
                 ])
                 st.cache_data.clear(); st.rerun()
             except Exception as e: st.error(f"雲端儲存失敗: {e}")
@@ -334,7 +333,7 @@ ts_amt, tl_amt, tc_amt = total_mkt*ts_pct/100, total_mkt*tl_pct/100, total_mkt*t
 
 # --- 9. 資產明細表 ---
 st.write("📋 **資產部位明細 (智能警示版)**")
-alert_triggered = False # 紀錄今天是否需要通知再平衡
+alert_triggered = False 
 if active_data:
     html = "<div><table><thead><tr><th>標的</th><th>持股數</th><th>報價</th><th>Beta</th><th>均價</th><th>市值</th><th>報酬</th><th>YTD</th><th>佔比</th><th>建議操作</th></tr></thead><tbody>"
     for sid, d in active_data.items():
@@ -365,30 +364,32 @@ if active_data:
     html += "</tbody></table></div>"
     st.write(html, unsafe_allow_html=True)
 
-# 🌟 新增：Line 推播與交易錄入
+# 🌟 LINE Messaging API 推播設定
 with st.sidebar:
     st.divider()
-    st.header("📱 Line 自動推播設定")
-    token_input = st.text_input("Line Notify Token", value=line_token, type="password")
+    st.header("📱 LINE 官方帳號推播設定")
+    st.markdown("<span style='color:#ff7b72; font-size:0.85rem;'>⚠️ LINE Notify 已停用，已全面升級為 Messaging API</span>", unsafe_allow_html=True)
+    channel_token_input = st.text_input("Channel Access Token", value=line_channel_token, type="password")
+    user_id_input = st.text_input("您的 User ID", value=line_user_id, type="password")
     
-    # 儲存 Token 邏輯
-    if token_input != line_token and st.button("更新 Token"):
-        client = get_client()
-        ws_settings = client.open_by_key(GS_ID).worksheet("Settings")
-        cell = ws_settings.find("line_token")
-        if cell: ws_settings.update_cell(cell.row, cell.col + 1, token_input)
-        else: ws_settings.append_row(["line_token", token_input])
-        st.cache_data.clear(); st.rerun()
-
     if st.button("📢 發送今日戰報", use_container_width=True):
-        if not token_input:
-            st.error("請先輸入 Line Token！")
+        if not channel_token_input or not user_id_input:
+            st.error("請填寫 Token 與 User ID！並點擊主畫面的『永久保存設定』。")
         else:
             alert_msg = "⚠️ 警示：有資產觸發再平衡水位！" if alert_triggered else "✅ 目前各資產皆在安全誤差範圍內。"
-            msg = f"\n🛡️ 退休戰情室 {today_str} 戰報\n\n💰 總市值: ${fmt_int(total_mkt)}\n📈 今日損益: ${fmt_int(today_delta)}\n📉 距前高跌幅: {drawdown_pct:.1f}%\n🏦 維持率: {margin_display}\n\n{alert_msg}"
-            res = requests.post("https://notify-api.line.me/api/notify", headers={"Authorization": f"Bearer {token_input}"}, data={"message": msg})
-            if res.status_code == 200: st.success("🚀 發送成功！請檢查手機。")
-            else: st.error("❌ 發送失敗，請確認 Token 是否正確。")
+            msg = f"🛡️ 退休戰情室 {today_str} 戰報\n\n💰 總市值: ${fmt_int(total_mkt)}\n📈 今日損益: ${fmt_int(today_delta)}\n📉 距前高跌幅: {drawdown_pct:.1f}%\n🏦 維持率: {margin_display}\n\n{alert_msg}"
+            
+            headers = {
+                "Authorization": f"Bearer {channel_token_input}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "to": user_id_input,
+                "messages": [{"type": "text", "text": msg}]
+            }
+            res = requests.post("https://api.line.me/v2/bot/message/push", headers=headers, json=payload)
+            if res.status_code == 200: st.success("🚀 發送成功！請檢查 LINE。")
+            else: st.error(f"❌ 發送失敗，錯誤碼: {res.status_code}，請確認 Token。")
 
     st.divider()
     st.header("🖊️ 交易錄入")
