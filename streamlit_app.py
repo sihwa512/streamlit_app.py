@@ -10,7 +10,7 @@ import pytz
 import math
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V85.2", layout="wide")
+st.set_page_config(page_title="退休戰情室 V85.3", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -94,7 +94,7 @@ def get_price_metrics(sid):
         except: continue
     return 0.0, 0.0, 0.0
 
-# --- 3. 視覺樣式 (舒適護眼) ---
+# --- 3. 視覺樣式 ---
 st.markdown("""
 <style>
     .stApp { background-color: #0d1117; color: #c9d1d9; }
@@ -186,7 +186,7 @@ else:
 today_delta = total_mkt - yesterday_mkt if yesterday_mkt > 0 else 0.0
 
 # --- 6. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V85.2 (全自動結算)")
+st.markdown(f"#### 🛡️ 退休戰情室 V85.3 (全自動結算)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div></div>
@@ -196,7 +196,7 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- 7. 🏆 闖關進度圖 (徹底修復裁切問題) ---
+# --- 7. 🏆 闖關進度圖 (修復比例失真) ---
 with st.sidebar:
     st.header("🎯 闖關目標設定")
     goal_amt = st.number_input("設定財務自由目標 (NTD)", value=30000000, step=1000000)
@@ -207,26 +207,36 @@ safe_display_mkt = safe_mkt_int if safe_mkt_int > 0 else 0
 max_x = max(goal_amt * 1.05, safe_display_mkt * 1.05)
 
 fig_prog = go.Figure()
-# 底色條 (稍暗的灰色)
-fig_prog.add_trace(go.Bar(x=[max_x], y=["進度"], orientation='h', marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip'))
-# 進度條 (科技藍)
-fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=["進度"], orientation='h', marker=dict(color='#2f81f7'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=14, color='#ffffff', family='Consolas')))
+
+# 設定 width 確保長條圖飽滿粗壯
+fig_prog.add_trace(go.Bar(x=[max_x], y=[" "], orientation='h', marker=dict(color='#1c2128', line=dict(width=1, color='#30363d')), hoverinfo='skip', width=0.6))
+fig_prog.add_trace(go.Bar(x=[safe_display_mkt], y=[" "], orientation='h', marker=dict(color='#2f81f7'), text=[f"目前: ${fmt_int(safe_display_mkt)}"], textposition='inside', insidetextanchor='middle', textfont=dict(size=16, color='#ffffff', family='Consolas'), width=0.6))
 
 milestones = [(m1, "Lv1 啟航"), (m2, "Lv2 半山腰"), (m3, "Lv3 衝刺"), (m4, "👑 財務自由")]
 for val, name in milestones:
-    # 達標用護眼綠，未達標用低調淺灰
     color = "#3fb950" if safe_display_mkt >= val else "#8b949e" 
     fig_prog.add_vline(x=val, line_width=2, line_dash="dash", line_color=color)
-    # yshift 稍微調大一點點推開棒子
-    fig_prog.add_annotation(x=val, y=0.5, text=f"{name}<br>{int(val/10000)}萬", showarrow=False, font=dict(color=color, size=12), xanchor="center", yanchor="bottom", yshift=22)
+    
+    # 🌟 解決文字被切的殺手鐧：將文字定錨在畫布的最頂端 (yref="paper", y=1)
+    fig_prog.add_annotation(
+        x=val, 
+        y=1, 
+        yref="paper", 
+        text=f"{name}<br>{int(val/10000)}萬", 
+        showarrow=False, 
+        font=dict(color=color, size=12), 
+        xanchor="center", 
+        yanchor="bottom", 
+        yshift=5
+    )
 
-# 🌟 核心修復：margin 的 't' (Top) 增加到 70，height 拉到 140，給文字絕對足夠的上方空間
+# 整體高度 110px，上方留白 45px 專門給文字使用，下方圖表保持飽滿
 fig_prog.update_layout(
     barmode='overlay', 
     xaxis=dict(range=[0, max_x], visible=False), 
     yaxis=dict(visible=False), 
-    height=140, 
-    margin=dict(l=15, r=15, t=70, b=5), 
+    height=110, 
+    margin=dict(l=15, r=15, t=45, b=5), 
     paper_bgcolor='rgba(0,0,0,0)', 
     plot_bgcolor='rgba(0,0,0,0)', 
     showlegend=False
