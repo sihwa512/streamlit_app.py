@@ -12,7 +12,7 @@ import requests
 import calendar
 
 # --- 1. 核心連線設定 ---
-st.set_page_config(page_title="退休戰情室 V91.0", layout="wide")
+st.set_page_config(page_title="退休戰情室 V91.1", layout="wide")
 GS_ID = "1jgZhEi-nmaXGUa5fJaYwk79xE9-QG4LwhwV89xriGPs"
 TW_TIMEZONE = pytz.timezone('Asia/Taipei')
 
@@ -217,7 +217,7 @@ margin_display = f"{margin_ratio:.0f}%" if margin_ratio != float('inf') else "�
 monthly_cf = (total_mkt * (default_yield / 100)) / 12
 
 # --- 6. 儀表板 ---
-st.markdown(f"#### 🛡️ 退休戰情室 V91.0 (視覺化日曆版)")
+st.markdown(f"#### 🛡️ 退休戰情室 V91.1 (日曆防呆版)")
 st.markdown(f"""
 <div class="metric-grid">
     <div class="metric-card"><div class="label-bright">💵 USD/TWD</div><div class="val-main" style="color:#58a6ff">{fx:.3f}</div><div class="val-sub">匯率參考</div></div>
@@ -279,7 +279,7 @@ with st.expander("📊 展開歷史走勢與大盤對比 (Benchmark Alpha)"):
     else:
         st.info("快照資料累積中，明天就會看到您與大盤的對決囉！")
 
-# --- 7.5 📅 報酬日曆與績效統計 ---
+# --- 7.5 📅 報酬日曆與績效統計 (修正版) ---
 st.divider()
 st.write("📅 **報酬日曆與歷史績效**")
 
@@ -310,23 +310,24 @@ if not df_snap.empty and len(df_snap) > 1:
                 
         cal_matrix = calendar.monthcalendar(curr_year, curr_month)
         
+        # 移除了字串前面的排版空白，避免 Markdown 誤判為程式碼區塊
         html_cal = f"""
-        <div style="background:#161b22; padding:15px; border-radius:8px; border:1px solid #30363d;">
-            <h4 style="text-align:center; color:#c9d1d9; margin-bottom:15px; font-family:sans-serif;">{curr_year} 年 {curr_month} 月</h4>
-            <div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; text-align:center;">
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">一</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">二</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">三</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">四</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">五</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px; color:#ff7b72;">六</div>
-                <div style="color:#8b949e; font-weight:bold; padding-bottom:5px; color:#ff7b72;">日</div>
-        """
+<div style="background:#161b22; padding:15px; border-radius:8px; border:1px solid #30363d;">
+<h4 style="text-align:center; color:#c9d1d9; margin-bottom:15px; font-family:sans-serif;">{curr_year} 年 {curr_month} 月</h4>
+<div style="display:grid; grid-template-columns:repeat(7, 1fr); gap:8px; text-align:center;">
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">一</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">二</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">三</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">四</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px;">五</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px; color:#ff7b72;">六</div>
+<div style="color:#8b949e; font-weight:bold; padding-bottom:5px; color:#ff7b72;">日</div>
+"""
         
         for week in cal_matrix:
             for day in week:
                 if day == 0:
-                    html_cal += f"""<div style="background:#0d1117; border-radius:6px; min-height:80px;"></div>"""
+                    html_cal += """<div style="background:#0d1117; border-radius:6px; min-height:80px;"></div>\n"""
                 else:
                     d_data = day_dict.get(day, None)
                     if d_data:
@@ -337,21 +338,19 @@ if not df_snap.empty and len(df_snap) > 1:
                         val_str = f"{sign}{val/10000:.1f}萬" if abs(val) >= 10000 else f"{sign}{int(val):,}"
                         
                         html_cal += f"""
-                        <div style="background:#21262d; border-radius:6px; padding:5px; min-height:80px; border:1px solid {color}40; display:flex; flex-direction:column; justify-content:space-between;">
-                            <div style="color:#8b949e; font-size:0.9rem; text-align:left;">{day}</div>
-                            <div style="color:{color}; font-weight:bold; font-size:1.05rem; font-family:'Consolas';">{val_str}</div>
-                            <div style="color:{color}; font-size:0.85rem; font-family:'Consolas';">{sign}{pct:.2f}%</div>
-                        </div>
-                        """
+<div style="background:#21262d; border-radius:6px; padding:5px; min-height:80px; border:1px solid {color}40; display:flex; flex-direction:column; justify-content:space-between;">
+<div style="color:#8b949e; font-size:0.9rem; text-align:left;">{day}</div>
+<div style="color:{color}; font-weight:bold; font-size:1.05rem; font-family:'Consolas';">{val_str}</div>
+<div style="color:{color}; font-size:0.85rem; font-family:'Consolas';">{sign}{pct:.2f}%</div>
+</div>\n"""
                     else:
                         is_today = "border:1px solid #58a6ff;" if day == now_tw.day else "border:1px solid #30363d;"
                         html_cal += f"""
-                        <div style="background:#161b22; border-radius:6px; padding:5px; min-height:80px; {is_today}">
-                            <div style="color:#8b949e; font-size:0.9rem; text-align:left;">{day}</div>
-                        </div>
-                        """
+<div style="background:#161b22; border-radius:6px; padding:5px; min-height:80px; {is_today}">
+<div style="color:#8b949e; font-size:0.9rem; text-align:left;">{day}</div>
+</div>\n"""
         html_cal += "</div></div>"
-        st.write(html_cal, unsafe_allow_html=True)
+        st.markdown(html_cal, unsafe_allow_html=True)
         
     with tab_month:
         month_end = df_cal.groupby('year_month').last().reset_index()
@@ -364,7 +363,7 @@ if not df_snap.empty and len(df_snap) > 1:
             m_sign = "+" if r['month_diff'] > 0 else ""
             m_html += f"<tr><td><b>{r['year_month']}</b></td><td>${int(r['total_mkt']):,}</td><td><span class='{m_color}'>{m_sign}{int(r['month_diff']):,}</span></td><td><span class='{m_color}'>{m_sign}{r['month_pct']:.2f}%</span></td></tr>"
         m_html += "</tbody></table>"
-        st.write(m_html, unsafe_allow_html=True)
+        st.markdown(m_html, unsafe_allow_html=True)
 
     with tab_year:
         year_end = df_cal.groupby('year').last().reset_index()
@@ -377,7 +376,7 @@ if not df_snap.empty and len(df_snap) > 1:
             y_sign = "+" if r['year_diff'] > 0 else ""
             y_html += f"<tr><td><b>{int(r['year'])}</b></td><td>${int(r['total_mkt']):,}</td><td><span class='{y_color}'>{y_sign}{int(r['year_diff']):,}</span></td><td><span class='{y_color}'>{y_sign}{r['year_pct']:.2f}%</span></td></tr>"
         y_html += "</tbody></table>"
-        st.write(y_html, unsafe_allow_html=True)
+        st.markdown(y_html, unsafe_allow_html=True)
 else:
     st.info("📅 系統已啟用報酬日曆功能。待明日系統記錄第二次快照後，即會開始顯示您的每日損益與日曆！")
 
@@ -482,7 +481,7 @@ if active_data:
         safe_mkt = int(d['m']) if pd.notna(d['m']) else 0
         html += f"<tr><td><b>{sid}</b></td><td>{fmt_int(d['sh'])}</td><td>{d['curr']:.2f}</td><td>{d['beta']:.1f}</td><td>{d['avg']:.2f}</td><td>${safe_mkt:,}</td><td><span class='{'up' if d['curr']>=d['avg'] else 'down'}'>{roi}</span></td><td><span class='{'up' if d['curr']>=d['ytd'] else 'down'}'>{ytd_roi}</span></td><td>{pct:.1f}%</td><td>{advice} {alert_tag}</td></tr>"
     html += "</tbody></table></div>"
-    st.write(html, unsafe_allow_html=True)
+    st.markdown(html, unsafe_allow_html=True)
 
 # 🌟 LINE Messaging API 推播設定
 with st.sidebar:
